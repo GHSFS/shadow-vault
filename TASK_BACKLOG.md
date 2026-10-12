@@ -5,9 +5,9 @@
 
 ## Completed
 - [x] **M01 — Core `SVLT` v1 Container & PNG Steganography Foundation**: Argon2id + ChaCha20-Poly1305 AEAD, Windows DPAPI dual-layer binding (`--dpapi`), lossless PNG `svLt` chunk embedding/extraction, header inspection, and 3-pass secure file shredding (`svault shred`).
+- [x] **M02 — WAV Audio Carrier Steganography (`src/wav.rs`)**: Embed and extract encrypted `SVLT` payloads inside uncompressed 16-bit PCM `.wav` audio files (`RIFF`/`WAVE` subchunk + LSB mode) with `svault embed-wav` / `svault extract-wav` commands, auto-detection in `inspect`, proactive `zeroize` memory hardening, and roundtrip tests.
 
 ## Pending Hourly Milestones
-- [ ] **M02 — WAV Audio Carrier Steganography (`src/wav.rs`)**: Embed and extract encrypted `SVLT` payloads inside uncompressed 16-bit PCM `.wav` audio files (`RIFF`/`WAVE` subchunk + LSB mode) with `svault embed-wav` / `svault extract-wav` commands and roundtrip tests.
 - [ ] **M03 — Plausible Deniability / Dual-Password Decoy Vault (`src/decoy.rs`)**: Support embedding both a decoy payload (unlocked with `--decoy-passphrase`) and a primary hidden payload (unlocked with `--passphrase`) inside a single container so coercion reveals only the harmless decoy.
 - [ ] **M04 — Shamir's Secret Sharing (`M-of-N` Key Splitting, `src/shamir.rs`)**: Split a master recovery key or secret into $N$ GF(256) shares requiring any $M$ shares to reconstruct (`svault split -m 3 -n 5` / `svault combine`).
 - [ ] **M05 — Passphrase Strength & Entropy Auditor (`src/audit.rs`)**: Shannon entropy bits-per-byte calculator, common-pattern detector, and carrier steganalysis anomaly check (`svault audit <file>`).
@@ -26,3 +26,9 @@
 - [ ] **M18 — Container Re-Key & Passphrase Rotation (`svault rotate`)**: Atomically re-encrypt an existing `.svault` or stego PNG with a new passphrase, fresh salt/nonce, and updated DPAPI binding.
 - [ ] **M19 — Detached Integrity Manifest & Canary Verification (`src/canary.rs`)**: Generate and verify signed SHA-256 tamper canaries for a directory of `.svault` / stego files (`svault canary init` / `svault canary verify`).
 - [ ] **M20 — Interactive Terminal Vault Shell (`svault repl`)**: In-memory session loop that unlocks a key-value secret store once and lets the operator query/add/remove secrets without touching disk in plaintext.
+- [ ] **M21 — MP3 ID3v2 & Audio Frame Stego Carrier (`src/mp3.rs`)**: Embed and extract encrypted `SVLT` containers within ID3v2 `PRIV` (private) tag frames or inter-frame padding across MPEG Audio Layer III files (`svault embed-mp3` / `svault extract-mp3`) with metadata preservation and CRC-32 verification.
+- [ ] **M22 — FIDO2 / Windows Hello Hardware Key Credential Binding (`src/hardware_token.rs`)**: Bind container encryption keys to FIDO2 / WebAuthn authenticators or Windows Hello biometric credentials (`--fido2`) as an additional hardware protection factor alongside Argon2id and DPAPI.
+- [ ] **M23 — Post-Quantum Hybrid Key Encapsulation (ML-KEM / Kyber, `src/pq_kem.rs`)**: Dual-layer post-quantum hybrid key exchange combining X25519 and ML-KEM-768 (FIPS 203) for quantum-resistant asymmetric vault sealing (`svault kem-seal` / `svault kem-open`).
+- [ ] **M24 — Memory-Locked Non-Pageable RAM Core (`src/mem_guard.rs`)**: Protect plaintext secret buffers against operating system disk paging (`pagefile.sys` / swap) via Windows `VirtualLock` and Unix `mlock` with process core-dump exclusion.
+- [ ] **M25 — Steganographic Network Payload Framing (`src/network_stego.rs`)**: Conceal encrypted `SVLT` payloads inside synthetic HTTP/2 response headers (e.g. customized ETag / header extensions) or DNS TXT record envelopes for air-gapped forensic transmission (`svault net-pack` / `svault net-unpack`).
+

@@ -7,6 +7,7 @@ mod crypto;
 mod error;
 mod shred;
 mod stego;
+mod wav;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -94,11 +95,60 @@ fn main() -> Result<()> {
                 output.display()
             );
         }
+        Commands::EmbedWav {
+            carrier,
+            secret,
+            output,
+            passphrase,
+            mode,
+            lsb,
+            dpapi,
+        } => {
+            let wav_bytes = fs::read(&carrier)
+                .with_context(|| format!("failed to read carrier WAV: {}", carrier.display()))?;
+            let raw_secret = fs::read(&secret)
+                .with_context(|| format!("failed to read secret file: {}", secret.display()))?;
+            let sealed = crypto::seal(&raw_secret, &passphrase, dpapi)?;
+            let effective_mode = if lsb { wav::WavMode::Lsb } else { mode };
+            let stego_wav = wav::embed_in_wav(&wav_bytes, &sealed, effective_mode)?;
+            fs::write(&output, &stego_wav)
+                .with_context(|| format!("failed to write stego WAV: {}", output.display()))?;
+            println!(
+                "{} embedded {} bytes into {} (mode: {})",
+                "ok".green().bold(),
+                raw_secret.len(),
+                output.display(),
+                effective_mode
+            );
+        }
+        Commands::ExtractWav {
+            carrier,
+            output,
+            passphrase,
+            mode,
+            lsb,
+        } => {
+            let wav_bytes = fs::read(&carrier)
+                .with_context(|| format!("failed to read stego WAV: {}", carrier.display()))?;
+            let effective_mode = if lsb { wav::ExtractWavMode::Lsb } else { mode };
+            let sealed = wav::extract_from_wav(&wav_bytes, effective_mode)?;
+            let plain = crypto::open(&sealed, &passphrase)?;
+            fs::write(&output, &plain)
+                .with_context(|| format!("failed to write extracted file: {}", output.display()))?;
+            println!(
+                "{} extracted {} bytes -> {}",
+                "ok".green().bold(),
+                plain.len(),
+                output.display()
+            );
+        }
         Commands::Inspect { input } => {
             let raw = fs::read(&input)
                 .with_context(|| format!("failed to read file: {}", input.display()))?;
             let container = if raw.starts_with(b"\x89PNG\r\n\x1a\n") {
                 stego::extract_from_png(&raw)?
+            } else if raw.len() >= 12 && &raw[0..4] == b"RIFF" && &raw[8..12] == b"WAVE" {
+                wav::extract_from_wav(&raw, wav::ExtractWavMode::Auto)?
             } else {
                 raw
             };

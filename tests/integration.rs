@@ -9,11 +9,73 @@ use tempfile::tempdir;
 
 #[test]
 fn cli_version_and_help_work() {
-    let mut cmd = Command::cargo_bin("svault").unwrap();
-    cmd.arg("--version")
+    Command::cargo_bin("svault")
+        .unwrap()
+        .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("0.1.0"));
+        .stdout(predicate::str::contains("svault 0.2.0"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .arg("-V")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("svault 0.2.0"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ShadowVault"))
+        .stdout(predicate::str::contains("encrypt"))
+        .stdout(predicate::str::contains("decrypt"))
+        .stdout(predicate::str::contains("embed"))
+        .stdout(predicate::str::contains("extract"))
+        .stdout(predicate::str::contains("embed-wav"))
+        .stdout(predicate::str::contains("extract-wav"))
+        .stdout(predicate::str::contains("inspect"))
+        .stdout(predicate::str::contains("shred"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .arg("-h")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ShadowVault"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["embed-wav", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("embed-wav"))
+        .stdout(predicate::str::contains("--mode"))
+        .stdout(predicate::str::contains("--lsb"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["embed-wav", "-h"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("embed-wav"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["extract-wav", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("extract-wav"))
+        .stdout(predicate::str::contains("--mode"))
+        .stdout(predicate::str::contains("--lsb"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["extract-wav", "-h"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("extract-wav"));
 }
 
 #[test]
@@ -116,4 +178,233 @@ fn cli_png_embed_and_extract_roundtrip() {
 
     let extracted = fs::read(&extracted_path).unwrap();
     assert_eq!(extracted, b"hidden inside PNG carrier");
+}
+
+fn generate_pcm_wav(num_samples: usize) -> Vec<u8> {
+    let sample_bytes = num_samples * 2;
+    let riff_size = (36 + sample_bytes) as u32;
+    let mut wav = Vec::with_capacity(44 + sample_bytes);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&riff_size.to_le_bytes());
+    wav.extend_from_slice(b"WAVE");
+    wav.extend_from_slice(b"fmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&44100u32.to_le_bytes());
+    wav.extend_from_slice(&88200u32.to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&(sample_bytes as u32).to_le_bytes());
+    for i in 0..num_samples {
+        let sample = ((i % 100) as i16) * 100;
+        wav.extend_from_slice(&sample.to_le_bytes());
+    }
+    wav
+}
+
+#[test]
+fn cli_wav_chunk_embed_inspect_and_extract_roundtrip() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("carrier.wav");
+    let secret_path = dir.path().join("secret.txt");
+    let stego_path = dir.path().join("stego_chunk.wav");
+    let extracted_path = dir.path().join("extracted_chunk.txt");
+
+    let wav = generate_pcm_wav(200);
+    fs::write(&carrier_path, wav).unwrap();
+    let payload = b"classified audio carrier note via RIFF chunk";
+    fs::write(&secret_path, payload).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-wav",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "wav-chunk-secret-pass",
+            "--mode",
+            "chunk",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("container_version: 1"))
+        .stdout(predicate::str::contains("dpapi_bound:       false"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-wav",
+            "-c",
+            stego_path.to_str().unwrap(),
+            "-o",
+            extracted_path.to_str().unwrap(),
+            "-p",
+            "wav-chunk-secret-pass",
+        ])
+        .assert()
+        .success();
+
+    let extracted = fs::read(&extracted_path).unwrap();
+    assert_eq!(extracted, payload);
+}
+
+#[test]
+fn cli_wav_lsb_embed_inspect_and_extract_roundtrip() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("carrier.wav");
+    let secret_path = dir.path().join("secret.txt");
+    let stego_path = dir.path().join("stego_lsb.wav");
+    let extracted_path = dir.path().join("extracted_lsb.txt");
+
+    // Needs enough samples: (payload.len() + 34 container header + 16 mac + 12 LSB overhead) * 8
+    let wav = generate_pcm_wav(1500);
+    fs::write(&carrier_path, wav).unwrap();
+    let payload = b"top-secret audio payload hidden in 16-bit PCM sample LSBs";
+    fs::write(&secret_path, payload).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-wav",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "wav-lsb-secret-pass",
+            "--lsb",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("container_version: 1"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-wav",
+            "-c",
+            stego_path.to_str().unwrap(),
+            "-o",
+            extracted_path.to_str().unwrap(),
+            "-p",
+            "wav-lsb-secret-pass",
+            "--mode",
+            "lsb",
+        ])
+        .assert()
+        .success();
+
+    let extracted = fs::read(&extracted_path).unwrap();
+    assert_eq!(extracted, payload);
+
+    // Verify default auto mode also extracts LSB payload cleanly
+    let auto_extracted_path = dir.path().join("auto_extracted_lsb.txt");
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-wav",
+            "-c",
+            stego_path.to_str().unwrap(),
+            "-o",
+            auto_extracted_path.to_str().unwrap(),
+            "-p",
+            "wav-lsb-secret-pass",
+        ])
+        .assert()
+        .success();
+
+    let auto_extracted = fs::read(&auto_extracted_path).unwrap();
+    assert_eq!(auto_extracted, payload);
+}
+
+#[test]
+fn cli_wav_cross_mode_reembedding_and_auto_extract() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("carrier_cross.wav");
+    let secret1_path = dir.path().join("secret1.txt");
+    let secret2_path = dir.path().join("secret2.txt");
+    let stego1_path = dir.path().join("stego1.wav");
+    let stego2_path = dir.path().join("stego2.wav");
+    let extracted_path = dir.path().join("extracted_final.txt");
+
+    let wav = generate_pcm_wav(1500);
+    fs::write(&carrier_path, wav).unwrap();
+    fs::write(&secret1_path, b"initial chunk secret").unwrap();
+    fs::write(&secret2_path, b"updated lsb secret replaces prior chunk").unwrap();
+
+    // 1. Embed using chunk mode
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-wav",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            secret1_path.to_str().unwrap(),
+            "-o",
+            stego1_path.to_str().unwrap(),
+            "-p",
+            "cross-pass-1",
+            "--mode",
+            "chunk",
+        ])
+        .assert()
+        .success();
+
+    // 2. Re-embed on top of stego1 using LSB mode
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-wav",
+            "-c",
+            stego1_path.to_str().unwrap(),
+            "-s",
+            secret2_path.to_str().unwrap(),
+            "-o",
+            stego2_path.to_str().unwrap(),
+            "-p",
+            "cross-pass-2",
+            "--lsb",
+        ])
+        .assert()
+        .success();
+
+    // 3. Extract with default Auto mode
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-wav",
+            "-c",
+            stego2_path.to_str().unwrap(),
+            "-o",
+            extracted_path.to_str().unwrap(),
+            "-p",
+            "cross-pass-2",
+        ])
+        .assert()
+        .success();
+
+    let extracted = fs::read(&extracted_path).unwrap();
+    assert_eq!(extracted, b"updated lsb secret replaces prior chunk");
 }

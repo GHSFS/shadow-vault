@@ -14,6 +14,7 @@ use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
+use zeroize::{Zeroize, Zeroizing};
 
 pub const MAGIC: &[u8; 4] = b"SVLT";
 pub const VERSION: u8 = 1;
@@ -43,7 +44,7 @@ pub fn seal(plaintext: &[u8], passphrase: &str, bind_dpapi: bool) -> Result<Vec<
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
     let key_bytes = derive_key(passphrase.as_bytes(), &salt)?;
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key_bytes));
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
@@ -97,7 +98,7 @@ pub fn open(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     };
 
     let key_bytes = derive_key(passphrase.as_bytes(), salt)?;
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key_bytes));
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(nonce_bytes);
 
     cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|_| {
@@ -129,20 +130,22 @@ pub fn inspect(container: &[u8]) -> Result<ContainerInfo> {
     })
 }
 
-fn derive_key(passphrase: &[u8], salt: &[u8]) -> Result<[u8; 32]> {
+fn derive_key(passphrase: &[u8], salt: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
     let params = Params::new(19 * 1024, 2, 1, Some(32))
         .map_err(|e| Error::Crypto(format!("Argon2 params error: {e}")))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut key = [0u8; 32];
+    let mut key = Zeroizing::new([0u8; 32]);
     argon2
-        .hash_password_into(passphrase, salt, &mut key)
+        .hash_password_into(passphrase, salt, key.as_mut())
         .map_err(|e| Error::Crypto(format!("Argon2id key derivation failed: {e}")))?;
 
     // Domain-separate the derived key with SHA-256
     let mut hasher = Sha256::new();
     hasher.update(b"shadow-vault-v1-key");
-    hasher.update(key);
-    Ok(hasher.finalize().into())
+    hasher.update(*key);
+    let mut derived = Zeroizing::new([0u8; 32]);
+    derived.copy_from_slice(&hasher.finalize());
+    Ok(derived)
 }
 
 #[cfg(windows)]
@@ -159,7 +162,7 @@ fn dpapi_protect(raw: &[u8]) -> Result<Vec<u8>> {
             pbData: bytes.as_mut_ptr(),
         };
         let mut blob_out = CRYPT_INTEGER_BLOB::default();
-        CryptProtectData(
+        let res = CryptProtectData(
             &blob_in,
             None,
             None,
@@ -167,8 +170,9 @@ fn dpapi_protect(raw: &[u8]) -> Result<Vec<u8>> {
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
             &mut blob_out,
-        )
-        .map_err(|e| Error::Dpapi(format!("CryptProtectData: {e}")))?;
+        );
+        bytes.zeroize();
+        res.map_err(|e| Error::Dpapi(format!("CryptProtectData: {e}")))?;
 
         let slice = std::slice::from_raw_parts(blob_out.pbData, blob_out.cbData as usize);
         let encrypted = slice.to_vec();
@@ -191,7 +195,7 @@ fn dpapi_unprotect(enc: &[u8]) -> Result<Vec<u8>> {
             pbData: buf.as_mut_ptr(),
         };
         let mut blob_out = CRYPT_INTEGER_BLOB::default();
-        CryptUnprotectData(
+        let res = CryptUnprotectData(
             &blob_in,
             None,
             None,
@@ -199,24 +203,32 @@ fn dpapi_unprotect(enc: &[u8]) -> Result<Vec<u8>> {
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
             &mut blob_out,
-        )
-        .map_err(|e| Error::Dpapi(format!("CryptUnprotectData: {e}")))?;
+        );
+        buf.zeroize();
+        res.map_err(|e| Error::Dpapi(format!("CryptUnprotectData: {e}")))?;
 
         let slice = std::slice::from_raw_parts(blob_out.pbData, blob_out.cbData as usize);
         let out = slice.to_vec();
+        // Securely wipe decrypted buffer using compiler-fenced zeroize before freeing
+        let slice_mut = std::slice::from_raw_parts_mut(blob_out.pbData, blob_out.cbData as usize);
+        slice_mut.zeroize();
         let _ = LocalFree(HLOCAL(blob_out.pbData as *mut _));
         Ok(out)
     }
 }
 
 #[cfg(not(windows))]
-fn dpapi_protect(raw: &[u8]) -> Result<Vec<u8>> {
-    Ok(raw.to_vec())
+fn dpapi_protect(_raw: &[u8]) -> Result<Vec<u8>> {
+    Err(Error::Dpapi(
+        "Windows DPAPI hardware binding is only supported on Windows systems".into(),
+    ))
 }
 
 #[cfg(not(windows))]
-fn dpapi_unprotect(enc: &[u8]) -> Result<Vec<u8>> {
-    Ok(enc.to_vec())
+fn dpapi_unprotect(_enc: &[u8]) -> Result<Vec<u8>> {
+    Err(Error::Dpapi(
+        "cannot open DPAPI-bound container on non-Windows platform".into(),
+    ))
 }
 
 #[cfg(test)]
@@ -251,5 +263,22 @@ mod tests {
 
         let opened = open(&sealed, "machine-pass").unwrap();
         assert_eq!(opened, secret);
+    }
+
+    #[test]
+    fn derived_key_is_zeroized_on_drop() {
+        let mut key = derive_key(b"test-passphrase", b"0123456789abcdef").unwrap();
+        assert_eq!(key.len(), 32);
+        assert_ne!(&*key, &[0u8; 32]);
+        key.zeroize();
+        assert_eq!(&*key, &[0u8; 32]);
+    }
+
+    #[test]
+    fn zeroize_clears_sensitive_buffer() {
+        let mut sensitive = [0xA5u8; 64];
+        assert_ne!(sensitive, [0u8; 64]);
+        sensitive.zeroize();
+        assert_eq!(sensitive, [0u8; 64]);
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "shadow-vault"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Zero-trust steganography and dual-layer hardware-bound encrypted vault (ChaCha20-Poly1305 + Argon2id + Windows DPAPI)"
@@ -28,6 +28,7 @@ base64 = "0.22"
 thiserror = "1"
 anyhow = "1"
 colored = "2"
+zeroize = { version = "1.8", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

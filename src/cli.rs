@@ -95,9 +95,65 @@ pub enum Commands {
         passphrase: String,
     },
 
-    /// Inspect a .svault container or stego PNG header without decrypting
+    /// Encrypt and hide a secret file inside a WAV audio carrier
+    #[command(name = "embed-wav", visible_alias = "hide-wav")]
+    EmbedWav {
+        /// Carrier WAV audio path
+        #[arg(short, long)]
+        carrier: PathBuf,
+
+        /// Secret file to encrypt and embed
+        #[arg(short, long)]
+        secret: PathBuf,
+
+        /// Output stego WAV audio path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Encryption passphrase
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Steganography mode (chunk or lsb)
+        #[arg(short, long, value_enum, default_value_t = crate::wav::WavMode::Chunk)]
+        mode: crate::wav::WavMode,
+
+        /// Use 16-bit PCM LSB mode (shorthand for --mode lsb)
+        #[arg(long)]
+        lsb: bool,
+
+        /// Bind hidden payload to the current Windows user/machine via DPAPI
+        #[arg(long)]
+        dpapi: bool,
+    },
+
+    /// Extract and decrypt a secret file from a stego WAV audio file
+    #[command(name = "extract-wav", visible_alias = "unhide-wav")]
+    ExtractWav {
+        /// Input stego WAV audio path
+        #[arg(short, long)]
+        carrier: PathBuf,
+
+        /// Output file path for extracted secret
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Decryption passphrase
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Steganography mode (auto, chunk, or lsb)
+        #[arg(short, long, value_enum, default_value_t = crate::wav::ExtractWavMode::Auto)]
+        mode: crate::wav::ExtractWavMode,
+
+        /// Use 16-bit PCM LSB mode (shorthand for --mode lsb)
+        #[arg(long)]
+        lsb: bool,
+    },
+
+    /// Inspect a .svault container or stego carrier header without decrypting
     Inspect {
-        /// Target .svault or .png file
+        /// Target .svault, .png, or .wav file
         input: PathBuf,
     },
 

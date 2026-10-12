@@ -5,6 +5,34 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-10-12
+
+### Added
+- Directory & Multi-File Manifest Packing Engine (`src/archive.rs`).
+- `SVAR` v1 binary archive specification with 18-byte header (`[magic "SVAR": 4B][version 1: 1B][flags: 1B][count: 4B LE][total_size: 8B LE]`) and 8-byte trailer (`[crc32: 4B LE][magic "SVEN": 4B]`).
+- Relative path canonicalization and multi-layered Zip Slip / path traversal defense:
+  - Rejects `..`, absolute paths, Windows drive letters, UNC shares, colon alternate data streams (ADS), null bytes, and control characters.
+  - Rejects Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1..9`, `LPT1..9`).
+  - Verifies extracted paths resolve strictly inside the target destination directory.
+- Decompression bomb / Zip bomb protection:
+  - Strict caps on maximum total archive size (8 GiB), single file size (4 GiB), entry count (100,000), path length (4,096 bytes), and nesting depth (64 levels).
+  - Validates entry length against remaining buffer before allocating data buffers to prevent OOM memory exhaustion.
+- Cryptographic SHA-256 per-file manifests:
+  - Calculates and embeds authentic SHA-256 digests for each entry.
+  - Automatically validates integrity during unpacking and in-memory verification.
+- Unix mode and Windows file permissions preservation:
+  - Preserves Unix permission bits and Windows readonly attributes in archive manifests.
+- Deterministic alphabetical entry sorting:
+  - Sorts relative paths canonically for reproducible, deterministic byte-for-byte archives.
+- Proactive memory zeroization:
+  - Implements `Zeroize` and `ZeroizeOnDrop` across `ArchiveEntry` and `Archive` structures.
+- CLI subcommands:
+  - `svault pack-dir` (visible alias: `pack`): Packs directory trees into `.svault` containers, with `--dpapi` hardware binding, `--armor` Reed-Solomon export, `--carrier` embedding (PNG, WAV, BMP), `--list`, and `--json`.
+  - `svault unpack-dir` (visible alias: `unpack`): Unpacks sealed archives from `.svault`, `.svault.asc`, PNG, WAV, or BMP carriers, supporting `--list`, `--verify-only`, `--overwrite`, and `--json`.
+- Transparent stego & armor carrier handling:
+  - Seamlessly extracts containers from ASCII armor, PNG chunks, WAV subchunks, or BMP LSB carriers when unpacking.
+- Comprehensive test coverage: 180 unit tests, 3 domain archive tests, and 81 integration tests (264 total tests, 100% pass).
+
 ## [0.9.0] - 2026-10-12
 
 ### Added

@@ -1692,6 +1692,7 @@ fn print_carrier_audit(rep: &audit::FileAuditReport) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_pack_dir_command(
     input: &Path,
     output: &Path,
@@ -1805,15 +1806,12 @@ fn handle_unpack_dir_command(
 
     // Stego / Armor transparent carrier decoding
     let container = if armor::is_armored(&raw_bytes) {
-        let text = std::str::from_utf8(&raw_bytes)
-            .context("armored container is not valid UTF-8")?;
+        let text =
+            std::str::from_utf8(&raw_bytes).context("armored container is not valid UTF-8")?;
         armor::dearmor_data(text)?.to_vec()
     } else if raw_bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         stego::extract_from_png(&raw_bytes)?
-    } else if raw_bytes.len() >= 12
-        && &raw_bytes[0..4] == b"RIFF"
-        && &raw_bytes[8..12] == b"WAVE"
-    {
+    } else if raw_bytes.len() >= 12 && &raw_bytes[0..4] == b"RIFF" && &raw_bytes[8..12] == b"WAVE" {
         wav::extract_from_wav(&raw_bytes, wav::ExtractWavMode::Auto)?
     } else if raw_bytes.starts_with(b"BM") {
         bmp::extract_from_bmp(&raw_bytes)?
@@ -1837,8 +1835,8 @@ fn handle_unpack_dir_command(
                 summary.total_bytes
             );
             println!(
-                "  {:<6} {:>10}  {:<8}  {:<16}  {}",
-                "TYPE", "SIZE", "PERM", "SHA256 (16)", "PATH"
+                "  {:<6} {:>10}  {:<8}  {:<16}  PATH",
+                "TYPE", "SIZE", "PERM", "SHA256 (16)"
             );
             println!("  {}", "-".repeat(70).dimmed());
             for entry in &summary.entries {

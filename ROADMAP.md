@@ -15,13 +15,13 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [x] **Auto-Expiring Windows Clipboard Guard (`src/clipboard_guard.rs`)** — Copy decrypted secrets or TOTP codes directly to the Windows clipboard with cloud/history suppression and automatic zeroization after a configurable TTL (`--clip-ttl`).
 - [x] **24-bit BMP Pixel LSB Carrier Engine (`src/bmp.rs`)** — Bit-level R/G/B least-significant-bit steganography across uncompressed 24-bit `.bmp` images with scanline padding preservation and capacity estimation (`svault capacity`).
 - [x] **Reed-Solomon Error-Correcting Armor (`src/armor.rs`)** — Cauchy MDS Reed-Solomon parity stripes over GF(256) and PEM-style `.svault.asc` ASCII armoring (`svault armor`, `svault dearmor`, `svault repair`) to recover vaults from bit rot or transport corruption.
+- [x] **Directory & Multi-File Manifest Packing (`src/archive.rs`)** — Pack entire directory trees with relative paths, zip bomb defenses, path traversal protection, and per-file SHA-256 digests into a single sealed `SVLT` container (`svault pack-dir` / `svault unpack-dir`).
 
 ---
 
 ## Planned Milestones
 
 ### Archive & Container Management
-- [ ] **Directory & Multi-File Manifest Packing (`src/archive.rs`)** — Pack entire directory trees with relative paths and per-file SHA-256 digests into a single sealed `SVLT` container (`svault pack-dir` / `svault unpack-dir`).
 - [ ] **Time-Lock & Expiration Policy Headers (`src/policy.rs`)** — Authenticate `not_before` and `expires_at` UTC timestamps via AEAD additional data so expired containers refuse decryption.
 - [ ] **Keyfile + Passphrase Two-Factor Derivation (`src/keyfile.rs`)** — Combine external hardware or USB keyfiles (`--keyfile <path>`) with user passphrases via HMAC-SHA256 pre-hashing prior to Argon2id.
 - [ ] **Chunked Streaming Encryption for Multi-GB Files (`src/stream.rs`)** — 4 MiB authenticated chunk streaming with per-chunk nonce derivation for constant $O(1)$ memory usage on large archives.

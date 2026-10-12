@@ -29,7 +29,8 @@
 7. **RFC 6238 TOTP 2FA Vault (`src/totp.rs`)** — zero-dependency encrypted local two-factor authentication secret store sealed inside `.svault` containers. Features RFC 4648 Base32 codec, self-contained RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1/256/512), dynamic truncation, `otpauth://totp/...` URI parser/serializer, constant-time verification against timing attacks, and terminal visual countdown progress bar (`svault totp add`, `svault totp code`, `svault totp list`, `svault totp verify`).
 8. **Auto-Expiring Clipboard Guard (`src/clipboard_guard.rs`)** — securely copies decrypted secrets, passwords, or TOTP tokens to the Windows clipboard with automatic suppression of Windows 10/11 Clipboard History and Cloud Sync (`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`). Automatically wipes the clipboard after a configurable TTL (e.g., `--clip-ttl 15`) with constant-time SHA-256 fingerprint matching to avoid overwriting user clipboard changes made subsequently (`svault clip copy`, `svault clip paste`, `svault clip clear`, `svault clip status`, or `--clip` across decryption/extraction commands).
 9. **Reed-Solomon / Parity Error-Correcting Armor (`src/armor.rs`)** — adds block parity recovery stripes and ASCII-armored `.svault.asc` export/import so containers survive partial bit rot or text transmission corruptions. Employs a Cauchy generator matrix $[I_K; A]$ over $\text{GF}(256)$ guaranteeing Maximum Distance Separable (MDS) erasure correction: ANY $K$ intact shards out of $K + M$ total stripes can reconstruct all original data shards. Supports automated corruption detection, self-healing document repair (`svault repair`), auto-detection in `inspect` and `audit`, and auto-expiring clipboard guard (`svault armor`, `svault dearmor`, `svault repair`).
-10. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
+10. **Directory & Multi-File Manifest Packing (`src/archive.rs`)** — packs entire directory trees with relative path canonicalization, multi-layered Zip Slip / path traversal prevention, zip bomb defense, per-file SHA-256 cryptographic manifests, and Unix/Windows permissions preservation into a single sealed `SVLT` container (`svault pack-dir` / `svault unpack-dir`). Supports `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi`, and transparent stego (PNG/WAV/BMP) & ASCII armor carrier extraction.
+11. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
 ### Features
 
@@ -78,6 +79,12 @@
   - **Self-Healing Repair Subcommand (`repair`)**: reconstructs damaged stripes and outputs a refreshed `.svault.asc` document or exports directly to binary (`--binary`) with full `--json` diagnostics.
   - **Transparent Recovery in `dearmor`**: automatically invokes Cauchy RS erasure reconstruction if any data stripes are corrupted in transit.
   - **Auto-Detection in `inspect` & `audit`**: inspects stripe health and audits CRC-32 integrity across all data and parity blocks.
+- **Directory & Multi-File Manifest Packing (`pack-dir` / `unpack-dir`)** — sealed container archiving with security hardening:
+  - **`SVAR` Binary Architecture**: 18-byte header (`SVAR` v1), per-entry metadata, individual SHA-256 digests, and trailing 8-byte CRC-32 checksum with `SVEN` magic.
+  - **Path Traversal & Zip Slip Prevention**: canonicalizes relative paths to `/`, rejects `..`, absolute/UNC paths, drive prefixes, ADS colon streams, null bytes, and Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1..9`, `LPT1..9`).
+  - **Decompression Bomb Defense**: hard caps on archive size (8 GiB), single file size (4 GiB), entry count (100,000), path length (4,096), and nesting depth (64 levels), with bounds checks before allocating buffers.
+  - **Flexible Manifest CLI**: `--list` displays table/JSON of archive contents, `--verify-only` cryptographically validates per-file SHA-256 digests in memory, and `--overwrite` controls destination replacement.
+  - **Transparent Carrier & Armor Extraction**: `unpack-dir` automatically dearmors `.svault.asc` documents and extracts from PNG, WAV, or BMP stego carriers.
 - **Universal Carrier Capacity Estimation (`capacity`)** — calculates total carrier capacity, usable payload capacity, and stego overhead bytes across `.bmp`, `.wav`, and `.png` carriers with optional `--json` machine-readable output.
 - **Zero-Knowledge Header Inspection (`inspect`)** — view container version, DPAPI binding flag, decoy container presence, payload byte size, and salt hex across `.svault`, `.png`, `.wav`, and `.bmp` files without decrypting or exposing hidden slot sizes.
 - **3-Pass Secure File Shredder (`shred`)** — overwrites sensitive plaintext files with `0x00`, `0xFF`, and CSPRNG random bytes before unlinking.
@@ -193,6 +200,18 @@ svault repair -i corrupted.svault.asc -o direct_recovered.svault --binary
 # 27. Inspect and audit ASCII armored container stripes and integrity
 svault inspect secret.svault.asc
 svault audit secret.svault.asc --json
+
+# 28. Pack an entire directory tree into an encrypted .svault container
+svault pack-dir -i ./my_project -o project.svault -p "pack-passphrase" --list
+
+# 29. Pack into a stego carrier (PNG, WAV, BMP) or ASCII armor
+svault pack-dir -i ./my_project -o project.png -p "pack-passphrase" --carrier cover.png
+svault pack-dir -i ./my_project -o project.svault.asc -p "pack-passphrase" --armor
+
+# 30. Unpack, inspect archive manifest, or verify cryptographic digests
+svault unpack-dir -i project.svault -p "pack-passphrase" --list
+svault unpack-dir -i project.svault -p "pack-passphrase" --verify-only
+svault unpack-dir -i project.svault -o ./restored_project -p "pack-passphrase" --overwrite
 ```
 
 ### License & Attribution
@@ -222,7 +241,8 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
 7. **RFC 6238 TOTP 2FA 보안 금고 (`src/totp.rs`)** — 외부 라이브러리 의존성 0개의 독립 로컬 암호화 2차 인증(2FA) 금고 엔진. RFC 4648 Base32 코덱, 자체 완비 RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1/256/512), `otpauth://totp/...` URI 파서/직렬화기, 부채널 타이밍 공격을 방어하는 상수시간 검증 및 터미널 시각적 잔여시간 카운트다운 진행바를 지원합니다 (`svault totp add`, `svault totp code`, `svault totp list`, `svault totp verify`).
 8. **자동 만료 클립보드 가드 (`src/clipboard_guard.rs`)** — 복호화된 비밀번호, TOTP 2FA 코드, 복구 시드문구를 Windows 클립보드로 안전하게 복사하고 설정된 유효시간(TTL, 예: `--clip-ttl 15`) 후 자동 소거합니다. Windows 10/11 클립보드 기록(Win + V) 및 클라우드 동기화 등록을 원천 차단하는 포맷 메타데이터(`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`)를 자동 주입하며, 소거 전 SHA-256 상수시간 지문 비교(`constant_time_eq_32`)를 수행해 사용자가 이후에 복사한 다른 클립보드 데이터를 덮어쓰지 않도록 안전하게 보호합니다 (`svault clip`, 및 복호화 명령 시 `--clip`).
 9. **리드-솔로몬 / 패리티 오류 정정 아머 (`src/armor.rs`)** — 블록 패리티 복구 스트라이프와 ASCII 아머드 `.svault.asc` 내보내기/가져오기/복구를 지원하여 부분적인 비트 손상(Bit Rot)이나 텍스트 전송 채널 상의 손상에서도 컨테이너를 복원합니다. $\text{GF}(256)$ 상의 코시(Cauchy) 생성 행렬 $[I_K; A]$을 사용하여 MDS(최대 거리 분리) 부호 성질을 보장하므로, 총 $K + M$개 스트라이프 중 임의의 $K$개 온전한 조각만 있으면 모든 원본 데이터를 완벽하게 재구성합니다. 자동 손상 탐지, 자가 치유 복구(`svault repair`), `inspect` 및 `audit` 자동 감지, 자동 만료 클립보드 가드를 결합 지원합니다 (`svault armor`, `svault dearmor`, `svault repair`).
-10. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
+10. **디렉터리 및 다중 파일 매니페스트 패킹 (`src/archive.rs`)** — 전체 디렉터리 트리를 상대 경로 정규화, 다중 계층 Zip Slip / 경로 순회(Path Traversal) 방어, 압축 폭탄(Zip Bomb) 방어, 파일별 SHA-256 암호학적 매니페스트, Unix/Windows 파일 권한 보존과 함께 단일 `SVLT` 컨테이너로 완전 밀봉(`svault pack-dir` / `svault unpack-dir`)합니다. `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi` 및 투명한 스테가노그래피(PNG/WAV/BMP) & ASCII 아머 캐리어 추출을 지원합니다.
+11. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
 ### 주요 기능
 
@@ -268,6 +288,12 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
   - **자가 치유 복구 명령 (`repair`)**: 손상된 스트라이프를 재구성하여 완전히 깨끗한 새 `.svault.asc` 문서를 재출력하거나 바이너리로 직통 추출(`--binary`)하며 상세 `--json` 진단 보고서 제공.
   - **`dearmor` 시 투명한 자동 복원**: 복호화/해제 과정에서 데이터 스트라이프 손상이 감지되면 별도 복구 명령 없이도 코시 RS 소거 복원을 전자동 실행하여 원본 복원.
   - **`inspect` 및 `audit` 자동 감지 연동**: 아머드 컨테이너의 스트라이프 구성 상태 및 CRC-32 무결성을 즉시 검사.
+- **디렉터리 및 다중 파일 매니페스트 패킹 (`pack-dir` / `unpack-dir`)** — 보안 강화된 단일 봉인 디렉터리 아카이브:
+  - **`SVAR` v1 바이너리 규격**: 18바이트 헤더(`SVAR` v1), 엔트리별 메타데이터, 개별 SHA-256 다이제스트, 8바이트 트레일러(`SVEN` 매직 및 CRC-32 체크섬).
+  - **경로 순회 & Zip Slip 원천 차단**: `/` 기반 상대 경로 정규화, `..`, 절대/UNC 경로, 드라이브 문자, 콜론 대체 데이터 스트림(ADS), 널 바이트 및 Windows 예약 장치명(`CON`, `PRN`, `AUX`, `NUL`, `COM1..9`, `LPT1..9`) 완벽 차단.
+  - **압축 폭탄 방어**: 총 아카이브 크기(8 GiB), 단일 파일 크기(4 GiB), 엔트리 수(100,000개), 경로 길이(4,096바이트), 디렉터리 깊이(64단계) 상한 및 메모리 할당 전 슬라이스 길이 선제 검증.
+  - **유연한 매니페스트 CLI**: `--list`로 아카이브 내용 조회, `--verify-only`로 디스크 기록 없이 메모리 상에서 파일별 SHA-256 무결성 즉시 검증, `--overwrite`로 대상 파일 덮어쓰기 안전 제어.
+  - **투명한 캐리어 & 아머 자동 해제**: `unpack-dir` 실행 시 `.svault.asc` 아머드 문서 및 PNG/WAV/BMP 스테가노그래피 캐리어로부터 컨테이너를 전자동 추출.
 - **범용 캐리어 용량 측정 (`capacity`)** — `.bmp`, `.wav`, `.png` 미디어의 전체 바이트, 순수 은닉 가용 용량, 12바이트 스테고 봉투 오버헤드를 정밀 계산하며 파이프라인 연동용 `--json` 출력 지원.
 - **컨테이너 헤더 검사 (`inspect`)** — 복호화 없이 `.svault`, `.png`, `.wav`, `.bmp` 파일의 컨테이너 버전, DPAPI 귀속 여부, 미끼 컨테이너 여부, 페이로드 크기, 솔트 값을 즉시 확인합니다 (은닉 슬롯의 크기는 은폐).
 - **다중 패스 완전 파쇄 (`shred`)** — 원본 평문 파일을 삭제할 때 `0x00` ➔ `0xFF` ➔ 난수 덮어쓰기 후 디스크 동기화 및 길이 0 절삭을 수행해 포렌식 복구를 차단합니다.
@@ -369,6 +395,18 @@ svault repair -i corrupted.svault.asc -o direct_recovered.svault --binary
 # 27. 아머드 컨테이너 스트라이프 상태 검사 및 무결성 감사
 svault inspect secret.svault.asc
 svault audit secret.svault.asc --json
+
+# 28. 전체 디렉터리 트리를 암호화된 .svault 아카이브로 패킹
+svault pack-dir -i ./my_project -o project.svault -p "금고비밀번호" --list
+
+# 29. 스테가노그래피 캐리어(PNG, WAV, BMP) 또는 ASCII 아머로 디렉터리 은닉 패킹
+svault pack-dir -i ./my_project -o project.png -p "금고비밀번호" --carrier cover.png
+svault pack-dir -i ./my_project -o project.svault.asc -p "금고비밀번호" --armor
+
+# 30. 디렉터리 언패킹, 아카이브 내용 조회 및 무결성 다이제스트 사전 검증
+svault unpack-dir -i project.svault -p "금고비밀번호" --list
+svault unpack-dir -i project.svault -p "금고비밀번호" --verify-only
+svault unpack-dir -i project.svault -o ./restored_project -p "금고비밀번호" --overwrite
 ```
 
 ### 저작권 및 라이선스

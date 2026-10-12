@@ -14,14 +14,14 @@ fn cli_version_and_help_work() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.9.0"));
+        .stdout(predicate::str::contains("svault 0.10.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
         .arg("-V")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.9.0"));
+        .stdout(predicate::str::contains("svault 0.10.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
@@ -49,7 +49,9 @@ fn cli_version_and_help_work() {
         .stdout(predicate::str::contains("audit"))
         .stdout(predicate::str::contains("totp"))
         .stdout(predicate::str::contains("clip"))
-        .stdout(predicate::str::contains("shred"));
+        .stdout(predicate::str::contains("shred"))
+        .stdout(predicate::str::contains("pack-dir"))
+        .stdout(predicate::str::contains("unpack-dir"));
 
     Command::cargo_bin("svault")
         .unwrap()
@@ -2899,8 +2901,12 @@ fn cli_audit_mixed_case_sequential_passphrase() {
     assert_eq!(json["passphrase"]["has_sequential"], true);
 }
 
+static CLIPBOARD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn cli_clipboard_guard_integration_suite() {
+    let _lock = CLIPBOARD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     // 1. Copy and Paste Roundtrip
     let secret = "test_clipboard_guard_secret_value_12345!";
     Command::cargo_bin("svault")
@@ -4322,6 +4328,7 @@ fn cli_dearmor_excessive_corruption_fails() {
 
 #[test]
 fn cli_armor_and_dearmor_clipboard_guard() {
+    let _lock = CLIPBOARD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempdir().unwrap();
     let secret_path = dir.path().join("clip_secret.txt");
     let asc_path = dir.path().join("clip_vault.asc");
@@ -4426,4 +4433,666 @@ fn cli_decrypt_directly_from_corrupted_armored_container() {
 
     let restored = fs::read(&decrypted_path).unwrap();
     assert_eq!(restored, secret_data);
+}
+
+#[test]
+fn cli_pack_and_unpack_dir_basic_roundtrip() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("source_files");
+    let vault_path = dir.path().join("archive.svault");
+    let dst_dir = dir.path().join("extracted_files");
+
+    fs::create_dir_all(src_dir.join("nested")).unwrap();
+    fs::write(src_dir.join("root.txt"), b"root file contents 12345").unwrap();
+    fs::write(
+        src_dir.join("nested").join("deep.dat"),
+        b"deeply nested binary payload \x00\xff\xfe",
+    )
+    .unwrap();
+    fs::write(src_dir.join("empty.txt"), b"").unwrap();
+
+    let pass = "archive-master-passphrase-2026!";
+
+    // Pack directory
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--list",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("packed"));
+
+    // Verify inspect recognizes container
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", vault_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("container_version: 1"));
+
+    // Unpack directory
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-o",
+            dst_dir.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("unpacked"));
+
+    assert_eq!(
+        fs::read(dst_dir.join("root.txt")).unwrap(),
+        b"root file contents 12345"
+    );
+    assert_eq!(
+        fs::read(dst_dir.join("nested").join("deep.dat")).unwrap(),
+        b"deeply nested binary payload \x00\xff\xfe"
+    );
+    assert_eq!(fs::read(dst_dir.join("empty.txt")).unwrap(), b"");
+}
+
+#[test]
+fn cli_unpack_dir_list_plain_and_json() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let vault_path = dir.path().join("archive.svault");
+
+    fs::create_dir_all(src_dir.join("sub")).unwrap();
+    fs::write(src_dir.join("a.txt"), b"apple").unwrap();
+    fs::write(src_dir.join("sub").join("b.txt"), b"banana").unwrap();
+
+    let pass = "list-test-pass!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    // Plain listing
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--list",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("a.txt"))
+        .stdout(predicate::str::contains("sub/b.txt"))
+        .stdout(predicate::str::contains("archive contains"));
+
+    // JSON listing
+    let assert_cmd = Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--list",
+            "--json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_cmd.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["file_count"], 2);
+    assert!(json["entries"].as_array().unwrap().len() >= 2);
+}
+
+#[test]
+fn cli_unpack_dir_verify_only_plain_and_json() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let vault_path = dir.path().join("archive.svault");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("hello.txt"), b"hello integrity check").unwrap();
+
+    let pass = "verify-test-pass!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    // Plain verify-only
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--verify-only",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("verified"))
+        .stdout(predicate::str::contains("digests intact"));
+
+    // JSON verify-only
+    let assert_cmd = Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--verify-only",
+            "--json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_cmd.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["valid"], true);
+    assert_eq!(json["files_verified"], 1);
+}
+
+#[test]
+fn cli_unpack_dir_overwrite_protection() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let vault_path = dir.path().join("archive.svault");
+    let dst_dir = dir.path().join("dst");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("file.txt"), b"packed version").unwrap();
+
+    let pass = "overwrite-pass!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    // First unpack succeeds
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-o",
+            dst_dir.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    // Second unpack without --overwrite fails
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-o",
+            dst_dir.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .failure();
+
+    // Second unpack with --overwrite succeeds
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-o",
+            dst_dir.to_str().unwrap(),
+            "-p",
+            pass,
+            "--overwrite",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn cli_pack_dir_with_dpapi_and_unpack() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let vault_path = dir.path().join("archive.svault");
+    let dst_dir = dir.path().join("dst");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
+        src_dir.join("dpapi_secret.txt"),
+        b"dpapi hardware bound archive",
+    )
+    .unwrap();
+
+    let pass = "dpapi-archive-pass-123!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--dpapi",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dpapi=true"));
+
+    // Inspect confirms DPAPI binding
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", vault_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dpapi_bound:       true"));
+
+    // Unpack DPAPI container
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-o",
+            dst_dir.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(dst_dir.join("dpapi_secret.txt")).unwrap(),
+        b"dpapi hardware bound archive"
+    );
+}
+
+#[test]
+fn cli_pack_and_unpack_dir_stego_png() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let carrier_path = dir.path().join("cover.png");
+    let stego_path = dir.path().join("stego.png");
+    let dst_dir = dir.path().join("dst");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("photo_note.txt"), b"hidden folder in PNG!").unwrap();
+
+    let minimal_png: [u8; 67] = [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    fs::write(&carrier_path, minimal_png).unwrap();
+
+    let pass = "png-pack-pass!";
+
+    // Pack directory into PNG stego carrier
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--carrier",
+            carrier_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Inspect stego PNG
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("container_version: 1"));
+
+    // Unpack directly from stego PNG
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            stego_path.to_str().unwrap(),
+            "-o",
+            dst_dir.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(dst_dir.join("photo_note.txt")).unwrap(),
+        b"hidden folder in PNG!"
+    );
+}
+
+#[test]
+fn cli_pack_and_unpack_dir_stego_wav() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let carrier_path = dir.path().join("cover.wav");
+    let stego_path = dir.path().join("stego.wav");
+    let dst_dir = dir.path().join("dst");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("audio_note.txt"), b"hidden archive in WAV!").unwrap();
+
+    fs::write(&carrier_path, generate_pcm_wav(4000)).unwrap();
+
+    let pass = "wav-pack-pass!";
+
+    // Pack directory into WAV carrier
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--carrier",
+            carrier_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Inspect stego WAV
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("container_version: 1"));
+
+    // Unpack directly from stego WAV
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            stego_path.to_str().unwrap(),
+            "-o",
+            dst_dir.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(dst_dir.join("audio_note.txt")).unwrap(),
+        b"hidden archive in WAV!"
+    );
+}
+
+#[test]
+fn cli_pack_and_unpack_dir_stego_bmp() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let carrier_path = dir.path().join("cover.bmp");
+    let stego_path = dir.path().join("stego.bmp");
+    let dst_dir = dir.path().join("dst");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
+        src_dir.join("bmp_note.txt"),
+        b"hidden folder in BMP carrier!",
+    )
+    .unwrap();
+
+    fs::write(&carrier_path, generate_24bit_bmp(128, 128)).unwrap();
+
+    let pass = "bmp-pack-pass!";
+
+    // Pack directory into BMP carrier
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--carrier",
+            carrier_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Inspect stego BMP
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("container_version: 1"));
+
+    // Unpack directly from stego BMP
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            stego_path.to_str().unwrap(),
+            "-o",
+            dst_dir.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(dst_dir.join("bmp_note.txt")).unwrap(),
+        b"hidden folder in BMP carrier!"
+    );
+}
+
+#[test]
+fn cli_pack_and_unpack_dir_armor_asc() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let asc_path = dir.path().join("archive.svault.asc");
+    let dst_dir = dir.path().join("dst");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(
+        src_dir.join("armored_note.txt"),
+        b"Reed-Solomon armored archive!",
+    )
+    .unwrap();
+
+    let pass = "armor-pack-pass!";
+
+    // Pack directory with --armor
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            asc_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--armor",
+        ])
+        .assert()
+        .success();
+
+    let asc_text = fs::read_to_string(&asc_path).unwrap();
+    assert!(asc_text.contains("BEGIN SHADOW VAULT ARMORED FILE"));
+
+    // Inspect armored container
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", asc_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("armored_container: true"));
+
+    // Unpack directly from .svault.asc
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            asc_path.to_str().unwrap(),
+            "-o",
+            dst_dir.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(dst_dir.join("armored_note.txt")).unwrap(),
+        b"Reed-Solomon armored archive!"
+    );
+}
+
+#[test]
+fn cli_unpack_dir_wrong_passphrase_fails() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let vault_path = dir.path().join("archive.svault");
+    let dst_dir = dir.path().join("dst");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("secret.txt"), b"sensitive").unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "correct-pass",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "unpack-dir",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-o",
+            dst_dir.to_str().unwrap(),
+            "-p",
+            "wrong-pass",
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn cli_pack_dir_json_output() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src");
+    let vault_path = dir.path().join("archive.svault");
+
+    fs::create_dir_all(&src_dir).unwrap();
+    fs::write(src_dir.join("file1.txt"), b"hello").unwrap();
+    fs::write(src_dir.join("file2.txt"), b"world!").unwrap();
+
+    let assert_cmd = Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "pack-dir",
+            "-i",
+            src_dir.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "json-pack-pass",
+            "--json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_cmd.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert_eq!(json["files_packed"], 2);
+    assert_eq!(json["total_bytes"], 11);
+    assert!(json["archive_size"].as_u64().unwrap() > 0);
 }

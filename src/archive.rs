@@ -110,7 +110,11 @@ impl std::fmt::Debug for Archive {
             .field("entry_count", &self.entries.len())
             .field(
                 "total_bytes",
-                &self.entries.iter().map(|e| e.data.len() as u64).sum::<u64>(),
+                &self
+                    .entries
+                    .iter()
+                    .map(|e| e.data.len() as u64)
+                    .sum::<u64>(),
             )
             .finish()
     }
@@ -222,7 +226,7 @@ pub fn sanitize_relative_path(raw: &str) -> Result<String> {
 
     // Split components by both '/' and '\'
     let parts: Vec<&str> = raw
-        .split(|c| c == '/' || c == '\\')
+        .split(['/', '\\'])
         .map(|s| s.trim())
         .filter(|s| !s.is_empty() && *s != ".")
         .collect();
@@ -240,8 +244,8 @@ pub fn sanitize_relative_path(raw: &str) -> Result<String> {
 
     // Reserved Windows device names (case-insensitive base stem)
     const RESERVED_NAMES: &[&str] = &[
-        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7",
-        "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
     ];
 
     for part in &parts {
@@ -274,6 +278,7 @@ pub fn sanitize_relative_path(raw: &str) -> Result<String> {
 
 impl Archive {
     /// Create a new empty archive.
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
@@ -511,8 +516,10 @@ impl Archive {
                 )));
             }
 
-            let raw_path_str = std::str::from_utf8(&raw[offset..offset + path_len])
-                .map_err(|_| Error::Archive(format!("entry #{entry_idx} path is not valid UTF-8")))?;
+            let raw_path_str =
+                std::str::from_utf8(&raw[offset..offset + path_len]).map_err(|_| {
+                    Error::Archive(format!("entry #{entry_idx} path is not valid UTF-8"))
+                })?;
             offset += path_len;
 
             let sanitized_path = sanitize_relative_path(raw_path_str)?;
@@ -591,7 +598,9 @@ impl Archive {
             fs::create_dir_all(dest_dir)?;
         }
 
-        let canonical_dest = dest_dir.canonicalize().unwrap_or_else(|_| dest_dir.to_path_buf());
+        let canonical_dest = dest_dir
+            .canonicalize()
+            .unwrap_or_else(|_| dest_dir.to_path_buf());
 
         let mut files_extracted = 0;
         let mut dirs_extracted = 0;
@@ -853,7 +862,11 @@ pub fn pack_directory(dir_path: &Path) -> Result<Vec<u8>> {
 }
 
 /// Convenience function to unpack raw `SVAR` binary bytes into a destination directory.
-pub fn unpack_archive(archive_bytes: &[u8], dest_dir: &Path, overwrite: bool) -> Result<UnpackReport> {
+pub fn unpack_archive(
+    archive_bytes: &[u8],
+    dest_dir: &Path,
+    overwrite: bool,
+) -> Result<UnpackReport> {
     let archive = Archive::from_bytes(archive_bytes)?;
     archive.extract(dest_dir, overwrite)
 }
@@ -889,10 +902,7 @@ mod tests {
             sanitize_relative_path("./nested/./file.txt").unwrap(),
             "nested/file.txt"
         );
-        assert_eq!(
-            sanitize_relative_path("a//b///c.txt").unwrap(),
-            "a/b/c.txt"
-        );
+        assert_eq!(sanitize_relative_path("a//b///c.txt").unwrap(), "a/b/c.txt");
     }
 
     #[test]
@@ -927,7 +937,7 @@ mod tests {
 
         fs::create_dir_all(file2_path.parent().unwrap()).unwrap();
         fs::write(&file1_path, b"Hello ShadowVault Manifest").unwrap();
-        fs::write(&file2_path, &[0xde, 0xad, 0xbe, 0xef, 0x42]).unwrap();
+        fs::write(&file2_path, [0xde, 0xad, 0xbe, 0xef, 0x42]).unwrap();
 
         let archive_bytes = pack_directory(src_dir.path()).unwrap();
         assert!(archive_bytes.starts_with(MAGIC));
@@ -993,7 +1003,10 @@ mod tests {
         // With overwrite: must succeed
         let res = unpack_archive(&archive_bytes, dst_dir.path(), true);
         assert!(res.is_ok());
-        assert_eq!(fs::read(dst_dir.path().join("test.txt")).unwrap(), b"original");
+        assert_eq!(
+            fs::read(dst_dir.path().join("test.txt")).unwrap(),
+            b"original"
+        );
     }
 
     #[test]
@@ -1005,7 +1018,10 @@ mod tests {
 
         // Tamper with file byte in the stream
         // The file data is near the end before trailer
-        let data_pos = archive_bytes.windows(14).position(|w| w == b"sensitive data").unwrap();
+        let data_pos = archive_bytes
+            .windows(14)
+            .position(|w| w == b"sensitive data")
+            .unwrap();
         archive_bytes[data_pos] = b'X';
 
         // Deserialization must reject due to trailer CRC or SHA-256 digest mismatch
@@ -1036,6 +1052,8 @@ mod tests {
         malformed.push(0);
         malformed.extend_from_slice(&1u32.to_le_bytes()); // 1 entry
         malformed.extend_from_slice(&(MAX_ARCHIVE_SIZE + 1024).to_le_bytes()); // Exceeds max archive size
+        malformed.extend_from_slice(&0u32.to_le_bytes()); // Mock CRC
+        malformed.extend_from_slice(TRAILER_MAGIC);
 
         let res = Archive::from_bytes(&malformed);
         assert!(res.is_err());
@@ -1050,6 +1068,8 @@ mod tests {
         malformed.push(0);
         malformed.extend_from_slice(&(MAX_ENTRY_COUNT + 1).to_le_bytes()); // Exceeds max entries
         malformed.extend_from_slice(&100u64.to_le_bytes());
+        malformed.extend_from_slice(&0u32.to_le_bytes()); // Mock CRC
+        malformed.extend_from_slice(TRAILER_MAGIC);
 
         let res = Archive::from_bytes(&malformed);
         assert!(res.is_err());
@@ -1085,8 +1105,8 @@ mod tests {
             data: vec![0xaa, 0xbb, 0xcc, 0xdd],
         };
 
-        // Explicit zeroize check
+        // Zeroize on Vec wipes data contents and truncates length to 0
         entry.data.zeroize();
-        assert_eq!(entry.data, vec![0, 0, 0, 0]);
+        assert!(entry.data.is_empty());
     }
 }

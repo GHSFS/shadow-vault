@@ -19,4 +19,7 @@ pub enum Error {
 
     #[error("Windows DPAPI error: {0}")]
     Dpapi(String),
+
+    #[error("clipboard error: {0}")]
+    Clipboard(String),
 }

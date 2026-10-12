@@ -101,6 +101,14 @@ pub enum Commands {
         /// Explicit decoy passphrase
         #[arg(long = "decoy-passphrase")]
         decoy_passphrase: Option<String>,
+
+        /// Copy decrypted plaintext to Windows clipboard with auto-expiring guard
+        #[arg(long = "clip")]
+        clip: bool,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
     },
 
     /// Decrypt a plausible deniability container (seamless or explicit decoy passphrase)
@@ -121,6 +129,14 @@ pub enum Commands {
         /// Explicit decoy passphrase
         #[arg(long = "decoy-passphrase")]
         decoy_passphrase: Option<String>,
+
+        /// Copy decrypted plaintext to Windows clipboard with auto-expiring guard
+        #[arg(long = "clip")]
+        clip: bool,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
     },
 
     /// Encrypt and hide a secret file inside a PNG carrier image
@@ -177,6 +193,14 @@ pub enum Commands {
         /// Explicit decoy passphrase
         #[arg(long = "decoy-passphrase")]
         decoy_passphrase: Option<String>,
+
+        /// Copy decrypted plaintext to Windows clipboard with auto-expiring guard
+        #[arg(long = "clip")]
+        clip: bool,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
     },
 
     /// Encrypt and hide a secret file inside a WAV audio carrier
@@ -249,6 +273,14 @@ pub enum Commands {
         /// Use 16-bit PCM LSB mode (shorthand for --mode lsb)
         #[arg(long)]
         lsb: bool,
+
+        /// Copy decrypted plaintext to Windows clipboard with auto-expiring guard
+        #[arg(long = "clip")]
+        clip: bool,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
     },
 
     /// Inspect a .svault container or stego carrier header without decrypting
@@ -345,6 +377,13 @@ pub enum Commands {
         #[command(subcommand)]
         action: TotpAction,
     },
+
+    /// Securely manage and guard clipboard with auto-expiring TTL and history suppression
+    #[command(name = "clip", visible_alias = "clipboard")]
+    Clip {
+        #[command(subcommand)]
+        action: ClipAction,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -415,6 +454,14 @@ pub enum TotpAction {
         /// Output generated code in structured JSON format
         #[arg(long)]
         json: bool,
+
+        /// Copy generated 2FA code to Windows clipboard with auto-expiring guard
+        #[arg(long = "clip")]
+        clip: bool,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
     },
 
     /// List all 2FA accounts stored in the encrypted vault
@@ -523,6 +570,45 @@ pub enum TotpAction {
         passphrase: String,
 
         /// Output export records in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ClipAction {
+    /// Copy text or secret to Windows clipboard and guard with auto-expiring TTL
+    #[command(visible_alias = "set")]
+    Copy {
+        /// Text or secret to copy to clipboard
+        #[arg(value_name = "TEXT")]
+        text: String,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15, 0 = copy without countdown)
+        #[arg(short, long, default_value_t = 15)]
+        ttl: u64,
+
+        /// Suppress terminal countdown progress bar
+        #[arg(short, long)]
+        quiet: bool,
+    },
+
+    /// Read and output current Unicode text from clipboard
+    #[command(visible_alias = "get", visible_alias = "read")]
+    Paste {
+        /// Output in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Unconditionally wipe the system clipboard
+    #[command(visible_alias = "wipe", visible_alias = "empty")]
+    Clear,
+
+    /// Inspect current clipboard status (format, history suppression, length)
+    #[command(visible_alias = "info")]
+    Status {
+        /// Output in structured JSON format
         #[arg(long)]
         json: bool,
     },

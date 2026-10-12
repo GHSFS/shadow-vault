@@ -14,14 +14,14 @@ fn cli_version_and_help_work() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.6.0"));
+        .stdout(predicate::str::contains("svault 0.7.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
         .arg("-V")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.6.0"));
+        .stdout(predicate::str::contains("svault 0.7.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
@@ -42,6 +42,7 @@ fn cli_version_and_help_work() {
         .stdout(predicate::str::contains("inspect"))
         .stdout(predicate::str::contains("audit"))
         .stdout(predicate::str::contains("totp"))
+        .stdout(predicate::str::contains("clip"))
         .stdout(predicate::str::contains("shred"));
 
     Command::cargo_bin("svault")
@@ -2841,4 +2842,195 @@ fn cli_audit_mixed_case_sequential_passphrase() {
     let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&output).unwrap();
     assert_eq!(json["passphrase"]["has_sequential"], true);
+}
+
+#[test]
+fn cli_clipboard_guard_integration_suite() {
+    // 1. Copy and Paste Roundtrip
+    let secret = "test_clipboard_guard_secret_value_12345!";
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "copy", secret, "--ttl", "0", "--quiet"])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "paste"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(secret));
+
+    // 2. Paste JSON and Status JSON
+    let assert_paste = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "paste", "--json"])
+        .assert()
+        .success();
+
+    let output_paste = String::from_utf8(assert_paste.get_output().stdout.clone()).unwrap();
+    let json_paste: serde_json::Value = serde_json::from_str(&output_paste).unwrap();
+    assert_eq!(json_paste["has_text"], true);
+    assert_eq!(json_paste["text"], secret);
+
+    let assert_status = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "status", "--json"])
+        .assert()
+        .success();
+
+    let output_status = String::from_utf8(assert_status.get_output().stdout.clone()).unwrap();
+    let json_status: serde_json::Value = serde_json::from_str(&output_status).unwrap();
+    assert_eq!(json_status["has_text"], true);
+    assert_eq!(json_status["bytes"], secret.len());
+    assert_eq!(json_status["characters"], secret.chars().count());
+    assert!(json_status["sha256"].is_string());
+
+    // 3. Clear and verify empty status
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "clear"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("clipboard cleared"));
+
+    let assert_empty = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "status", "--json"])
+        .assert()
+        .success();
+
+    let output_empty = String::from_utf8(assert_empty.get_output().stdout.clone()).unwrap();
+    let json_empty: serde_json::Value = serde_json::from_str(&output_empty).unwrap();
+    assert_eq!(json_empty["has_text"], false);
+
+    // 4. Aliases work ('clipboard set', 'clipboard get', 'clipboard info', 'clipboard wipe')
+    let alias_secret = "aliased_clipboard_token_99";
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clipboard", "set", alias_secret, "--ttl", "0", "--quiet"])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clipboard", "get"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(alias_secret));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clipboard", "info"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Windows Clipboard Status"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clipboard", "wipe"])
+        .assert()
+        .success();
+
+    // 5. TOTP Code with --clip flag
+    let dir = tempdir().unwrap();
+    let vault_path = dir.path().join("totp_clip.svault");
+    let pass = "test_totp_clip_pass!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "add",
+            "ClipUser",
+            "--secret",
+            "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    // Generate code at time 59 (RFC 6238 code = 287082) with --clip
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "code",
+            "ClipUser",
+            "--time",
+            "59",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--clip",
+            "--clip-ttl",
+            "0",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "paste"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("287082"));
+
+    // 6. Decrypt with --clip flag
+    let src_path = dir.path().join("secret.txt");
+    let enc_path = dir.path().join("secret.svault");
+    let out_path = dir.path().join("decrypted.txt");
+    let dec_secret = "SuperSecretDecryptedKeyToClipboard2026!";
+    let dec_pass = "my-secure-decrypt-pass!";
+
+    fs::write(&src_path, dec_secret).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "encrypt",
+            "-i",
+            src_path.to_str().unwrap(),
+            "-o",
+            enc_path.to_str().unwrap(),
+            "-p",
+            dec_pass,
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "decrypt",
+            "-i",
+            enc_path.to_str().unwrap(),
+            "-o",
+            out_path.to_str().unwrap(),
+            "-p",
+            dec_pass,
+            "--clip",
+            "--clip-ttl",
+            "0",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "paste"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(dec_secret));
+
+    // Clean up
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "clear"])
+        .assert()
+        .success();
 }

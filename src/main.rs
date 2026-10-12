@@ -17,7 +17,7 @@ mod wav;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, Commands, TotpAction};
+use cli::{Cli, ClipAction, Commands, TotpAction};
 use colored::Colorize;
 use std::fs;
 use std::io::{Read, Write};
@@ -98,16 +98,20 @@ fn main() -> Result<()> {
             output,
             passphrase,
             decoy_passphrase,
+            clip,
+            clip_ttl,
         }
         | Commands::DecryptDecoy {
             input,
             output,
             passphrase,
             decoy_passphrase,
+            clip,
+            clip_ttl,
         } => {
             let container = fs::read(&input)
                 .with_context(|| format!("failed to read container: {}", input.display()))?;
-            let plain = if let Some(d_pass) = decoy_passphrase {
+            let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&container) {
                     decoy::open_decoy_explicit(&container, passphrase.as_deref(), Some(&d_pass))?
                 } else {
@@ -126,7 +130,29 @@ fn main() -> Result<()> {
                 plain.len(),
                 output.display()
             );
+            if clip {
+                match std::str::from_utf8(&plain) {
+                    Ok(text) => {
+                        let _ = clipboard_guard::guard_interactive(
+                            text,
+                            clip_ttl,
+                            Some("decrypted vault"),
+                        )?;
+                    }
+                    Err(_) => {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&plain);
+                        let _ = clipboard_guard::guard_interactive(
+                            &b64,
+                            clip_ttl,
+                            Some("decrypted binary (base64)"),
+                        )?;
+                    }
+                }
+            }
+            plain.zeroize();
         }
+
         Commands::Embed {
             carrier,
             secret,
@@ -176,11 +202,13 @@ fn main() -> Result<()> {
             output,
             passphrase,
             decoy_passphrase,
+            clip,
+            clip_ttl,
         } => {
             let png = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego PNG: {}", carrier.display()))?;
             let sealed = stego::extract_from_png(&png)?;
-            let plain = if let Some(d_pass) = decoy_passphrase {
+            let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&sealed) {
                     decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
                 } else {
@@ -199,7 +227,29 @@ fn main() -> Result<()> {
                 plain.len(),
                 output.display()
             );
+            if clip {
+                match std::str::from_utf8(&plain) {
+                    Ok(text) => {
+                        let _ = clipboard_guard::guard_interactive(
+                            text,
+                            clip_ttl,
+                            Some("extracted secret"),
+                        )?;
+                    }
+                    Err(_) => {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&plain);
+                        let _ = clipboard_guard::guard_interactive(
+                            &b64,
+                            clip_ttl,
+                            Some("extracted binary (base64)"),
+                        )?;
+                    }
+                }
+            }
+            plain.zeroize();
         }
+
         Commands::EmbedWav {
             carrier,
             secret,
@@ -255,12 +305,14 @@ fn main() -> Result<()> {
             decoy_passphrase,
             mode,
             lsb,
+            clip,
+            clip_ttl,
         } => {
             let wav_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego WAV: {}", carrier.display()))?;
             let effective_mode = if lsb { wav::ExtractWavMode::Lsb } else { mode };
             let sealed = wav::extract_from_wav(&wav_bytes, effective_mode)?;
-            let plain = if let Some(d_pass) = decoy_passphrase {
+            let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&sealed) {
                     decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
                 } else {
@@ -279,7 +331,29 @@ fn main() -> Result<()> {
                 plain.len(),
                 output.display()
             );
+            if clip {
+                match std::str::from_utf8(&plain) {
+                    Ok(text) => {
+                        let _ = clipboard_guard::guard_interactive(
+                            text,
+                            clip_ttl,
+                            Some("extracted secret"),
+                        )?;
+                    }
+                    Err(_) => {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&plain);
+                        let _ = clipboard_guard::guard_interactive(
+                            &b64,
+                            clip_ttl,
+                            Some("extracted binary (base64)"),
+                        )?;
+                    }
+                }
+            }
+            plain.zeroize();
         }
+
         Commands::Inspect { input } => {
             let raw = fs::read(&input)
                 .with_context(|| format!("failed to read file: {}", input.display()))?;
@@ -547,6 +621,9 @@ fn main() -> Result<()> {
         Commands::Totp { action } => {
             handle_totp_command(action)?;
         }
+        Commands::Clip { action } => {
+            handle_clip_command(action)?;
+        }
     }
 
     Ok(())
@@ -620,6 +697,8 @@ fn handle_totp_command(action: TotpAction) -> Result<()> {
             vault,
             mut passphrase,
             json,
+            clip,
+            clip_ttl,
         } => {
             let vault_inst = totp::TotpVault::load(&vault, &passphrase)?;
             passphrase.zeroize();
@@ -665,6 +744,10 @@ fn handle_totp_command(action: TotpAction) -> Result<()> {
                     bar.yellow(),
                     format!("({}s remaining)", remaining).green()
                 );
+            }
+
+            if clip {
+                let _ = clipboard_guard::guard_interactive(&code, clip_ttl, Some(&record.name))?;
             }
         }
 
@@ -902,6 +985,84 @@ fn handle_totp_command(action: TotpAction) -> Result<()> {
             } else {
                 for r in vault_inst.list_records() {
                     println!("{}", r.to_uri());
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_clip_command(action: ClipAction) -> Result<()> {
+    match action {
+        ClipAction::Copy { text, ttl, quiet } => {
+            if quiet {
+                let guarded = clipboard_guard::copy_to_clipboard(&text)?;
+                if ttl > 0 {
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(ttl));
+                        let _ = guarded.scrub();
+                    });
+                }
+            } else {
+                let _ = clipboard_guard::guard_interactive(&text, ttl, None)?;
+            }
+        }
+        ClipAction::Paste { json } => {
+            let content = clipboard_guard::get_clipboard_text()?;
+            if json {
+                let out = serde_json::json!({
+                    "has_text": content.is_some(),
+                    "text": content,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if let Some(ref s) = content {
+                print!("{s}");
+                if !s.ends_with('\n') {
+                    println!();
+                }
+            }
+        }
+        ClipAction::Clear => {
+            clipboard_guard::clear_clipboard()?;
+            println!("{} clipboard cleared", "ok".green().bold());
+        }
+        ClipAction::Status { json } => {
+            let content = clipboard_guard::get_clipboard_text()?;
+            let has_text = content.is_some();
+            let length = content.as_ref().map(|s| s.len()).unwrap_or(0);
+            let char_count = content.as_ref().map(|s| s.chars().count()).unwrap_or(0);
+            let sha256_hex = content.as_ref().map(|s| {
+                use sha2::{Digest, Sha256};
+                let mut h = Sha256::new();
+                h.update(s.as_bytes());
+                format!("{:x}", h.finalize())
+            });
+
+            if json {
+                let out = serde_json::json!({
+                    "has_text": has_text,
+                    "bytes": length,
+                    "characters": char_count,
+                    "sha256": sha256_hex,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("{} Windows Clipboard Status", "=== [CLIPBOARD] ===".bold());
+                println!(
+                    "  Has Unicode Text:      {}",
+                    if has_text {
+                        "yes".green()
+                    } else {
+                        "no".dimmed()
+                    }
+                );
+                if let Some(ref hash) = sha256_hex {
+                    println!(
+                        "  Text Length:           {} chars ({} bytes)",
+                        char_count, length
+                    );
+                    println!("  SHA-256 Fingerprint:   {}", hash.cyan());
                 }
             }
         }

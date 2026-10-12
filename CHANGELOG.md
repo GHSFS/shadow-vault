@@ -5,6 +5,27 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-12
+
+### Added
+- Auto-Expiring Clipboard Guard Engine (`src/clipboard_guard.rs`).
+- Native Windows Win32 API clipboard subsystem integration via `windows` 0.58 (`OpenClipboard`, `EmptyClipboard`, `SetClipboardData`, `CloseClipboard`, `GetClipboardData`, `RegisterClipboardFormatW`, and `GlobalAlloc`/`GlobalLock`/`GlobalUnlock`).
+- Windows 10/11 Clipboard History and Cloud Sync suppression: automatically registers and writes suppression flags:
+  - `CanIncludeInClipboardHistory` (DWORD 0)
+  - `ExcludeClipboardContentFromMonitorProcessing` (DWORD 1)
+  - `Clipboard Viewer Ignore` (DWORD 1)
+- Constant-time SHA-256 fingerprint verification (`constant_time_eq_32`) preventing race conditions and ensuring the clipboard is cleared only if it still holds the protected secret, preserving subsequent user clipboard updates.
+- Real-time terminal visual progress countdown bar (`[████████░░] 12s remaining`), non-blocking console input detection for early Enter-to-clear, and daemon mode for headless execution.
+- CLI subcommands:
+  - `svault clip copy <text>` (aliases: `set`): Copy secret with configurable auto-expiring TTL (`--ttl <seconds>`) and optional silent mode (`--silent`).
+  - `svault clip paste` (aliases: `get`): Read and output current clipboard contents.
+  - `svault clip clear` (aliases: `wipe`): Instantly purge and zeroize clipboard content.
+  - `svault clip status` (aliases: `info`): Inspect clipboard format metadata and history exclusion status.
+- Integration across secret retrieval commands:
+  - Added `--clip` and `--clip-ttl <seconds>` flags to `decrypt`, `decrypt-decoy`, `extract`, `extract-wav`, and `totp code`.
+- Proactive memory zeroization (`zeroize`) wiping intermediate UTF-16 buffers and secret bytes upon completion.
+- Comprehensive test coverage: 129 unit tests and 52 integration tests (181 total tests, 100% pass).
+
 ## [0.6.0] - 2026-10-12
 
 ### Added

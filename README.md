@@ -25,11 +25,18 @@
 4. **Shamir's Secret Sharing (`M-of-N` Key Splitting, `src/shamir.rs`)** — mathematically provable information-theoretic secret sharing over $\text{GF}(256)$ with constant-time arithmetic. Split master recovery keys, passphrases, or `.svault` containers into $N$ shares requiring any $M$ shares to reconstruct (`svault split` / `svault combine`).
 5. **Passphrase Strength & Carrier Entropy Auditor (`src/audit.rs`)** — evaluates passphrase resiliency via Shannon entropy bits-per-byte, character pool diversity, and predictive vulnerability pattern detection (repeated characters, ascending/descending sequences, keyboard walks, leetspeak dictionary matching). Audits steganography carriers (PNG chunks, WAV RIFF/LSB streams) and encrypted `.svault` containers for anomalies and tampering (`svault audit <target>` / `svault audit -p <passphrase>`).
 6. **RFC 6238 TOTP 2FA Vault (`src/totp.rs`)** — zero-dependency encrypted local two-factor authentication secret store sealed inside `.svault` containers. Features RFC 4648 Base32 codec, self-contained RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1/256/512), dynamic truncation, `otpauth://totp/...` URI parser/serializer, constant-time verification against timing attacks, and terminal visual countdown progress bar (`svault totp add`, `svault totp code`, `svault totp list`, `svault totp verify`).
-7. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
+7. **Auto-Expiring Clipboard Guard (`src/clipboard_guard.rs`)** — securely copies decrypted secrets, passwords, or TOTP tokens to the Windows clipboard with automatic suppression of Windows 10/11 Clipboard History and Cloud Sync (`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`). Automatically wipes the clipboard after a configurable TTL (e.g., `--clip-ttl 15`) with constant-time SHA-256 fingerprint matching to avoid overwriting user clipboard changes made subsequently (`svault clip copy`, `svault clip paste`, `svault clip clear`, `svault clip status`, or `--clip` across decryption/extraction commands).
+8. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
 ### Features
 
 - **Argon2id + ChaCha20-Poly1305 AEAD** — 128-bit random salt, 96-bit random nonce, domain-separated 256-bit key derivation, and 128-bit Poly1305 authentication tag.
+- **Auto-Expiring Clipboard Guard (`clip`)** — secure credential clipboard transfer with automated destruction:
+  - **Native Win32 Integration**: direct Win32 clipboard API calls (`OpenClipboard`, `EmptyClipboard`, `SetClipboardData`, `CloseClipboard`, `GetClipboardData`) with retry backoff.
+  - **History & Cloud Sync Suppression**: writes Windows 10/11 privacy metadata formats (`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`, `Clipboard Viewer Ignore`) to prevent persistent storage in clipboard history (Win + V) or Microsoft cloud synchronization.
+  - **Constant-Time Verification**: branchless SHA-256 fingerprint verification (`constant_time_eq_32`) ensures the clipboard is only purged if it still holds the exact protected secret, preventing accidental scrubbing if the operator copied new text in the interim.
+  - **Visual Countdown & Interactive Clearance**: dynamic terminal progress bar (`[████████░░] 12s remaining`), non-blocking instant Enter-to-clear shortcut, and silent daemon mode.
+  - **Direct Command Integration**: `--clip` and `--clip-ttl <sec>` flags available on `decrypt`, `decrypt-decoy`, `extract`, `extract-wav`, and `totp code`.
 - **RFC 6238 TOTP 2FA Vault (`totp`)** — encrypted multi-account two-factor authenticator:
   - **Zero External Dependencies**: self-contained Base32 codec (RFC 4648), RFC 3174 SHA-1, and RFC 2104 HMAC (SHA-1, SHA-256, SHA-512) verified against RFC 4226 Appendix D and RFC 6238 Appendix B test vectors.
   - **Hardware Binding & AEAD Protection**: account secrets stored inside `.svault` containers encrypted via Argon2id + ChaCha20-Poly1305 and optional Windows DPAPI.
@@ -134,6 +141,18 @@ svault totp verify github 123456 --skew 1 --vault totp.svault -p "vault-pass"
 # 17. List and export 2FA accounts
 svault totp list --vault totp.svault -p "vault-pass"
 svault totp export github --vault totp.svault -p "vault-pass"
+
+# 18. Copy a secret to clipboard with 15-second auto-expiring guard (or silent mode)
+svault clip copy "my-super-secret-password" --ttl 15
+svault clip copy "my-super-secret-password" --ttl 15 --silent
+
+# 19. Check clipboard status and history exclusion metadata, or manually clear
+svault clip status
+svault clip clear
+
+# 20. Decrypt directly to protected clipboard without printing to terminal or writing plaintext to disk
+svault decrypt -i secret.svault -p "vault-pass" --clip --clip-ttl 30
+svault totp code github --vault totp.svault -p "vault-pass" --clip --clip-ttl 15
 ```
 
 ### License & Attribution
@@ -159,11 +178,18 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
 4. **샤미르 비밀 공유 (`M-of-N` 키 분할, `src/shamir.rs`)** — $\text{GF}(256)$ 유한체 기반 정보이론적 비밀 분할/복원 엔진. 분기 없는 상수시간(Constant-Time) 연산으로 부채널 공격을 방어하며, 마스터 복구 키, 비밀번호, 대용량 바이너리 금고를 $N$개 조각으로 분할하여 임의의 $M$개 조각으로만 원본을 복원(`svault split` / `svault combine`)합니다. 아머드 텍스트, 한 줄 압축, JSON 직렬화 및 SHA-256/CRC-32 무결성 검증을 지원합니다.
 5. **비밀번호 강도 & 스테가노그래피 캐리어 엔트로피 감사기 (`src/audit.rs`)** — 섀넌 엔트로피(Shannon entropy bits/byte), 문자 풀 다양성, 취약 패턴 탐지(반복 문자, 연속 시퀀스, 키보드 워크, 리트스피크 사전 매칭)를 통해 비밀번호 내구성을 감사하고, PNG 청크·WAV 서브청크/LSB 스트림 및 `.svault` 컨테이너의 변조·이상 징후를 정밀 분석(`svault audit <대상>` / `svault audit -p <비밀번호>`)합니다.
 6. **RFC 6238 TOTP 2FA 보안 금고 (`src/totp.rs`)** — 외부 라이브러리 의존성 0개의 독립 로컬 암호화 2차 인증(2FA) 금고 엔진. RFC 4648 Base32 코덱, 자체 완비 RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1/256/512), `otpauth://totp/...` URI 파서/직렬화기, 부채널 타이밍 공격을 방어하는 상수시간 검증 및 터미널 시각적 잔여시간 카운트다운 진행바를 지원합니다 (`svault totp add`, `svault totp code`, `svault totp list`, `svault totp verify`).
-7. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
+7. **자동 만료 클립보드 가드 (`src/clipboard_guard.rs`)** — 복호화된 비밀번호, TOTP 2FA 코드, 복구 시드문구를 Windows 클립보드로 안전하게 복사하고 설정된 유효시간(TTL, 예: `--clip-ttl 15`) 후 자동 소거합니다. Windows 10/11 클립보드 기록(Win + V) 및 클라우드 동기화 등록을 원천 차단하는 포맷 메타데이터(`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`)를 자동 주입하며, 소거 전 SHA-256 상수시간 지문 비교(`constant_time_eq_32`)를 수행해 사용자가 이후에 복사한 다른 클립보드 데이터를 덮어쓰지 않도록 안전하게 보호합니다 (`svault clip`, 및 복호화 명령 시 `--clip`).
+8. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
 ### 주요 기능
 
 - **Argon2id + ChaCha20-Poly1305 AEAD** — 매 암호화마다 새로운 128비트 솔트와 96비트 논스를 생성하며 변조 시 즉시 복호화를 거부합니다.
+- **자동 만료 클립보드 가드 (`clip`)** — 안전한 자격증명 복사 및 자동 파기 엔진:
+  - **네이티브 Win32 API 직통 제어**: 외장 크레이트 없이 Windows 클립보드 API(`OpenClipboard`, `EmptyClipboard`, `SetClipboardData`, `CloseClipboard`)를 10회 재시도 백오프로 안정적으로 제어.
+  - **클립보드 기록 및 클라우드 동기화 영구 차단**: Windows 10/11 전용 포맷(`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`, `Clipboard Viewer Ignore`)을 자동 등록/주입하여 Win+V 히스토리 잔존 및 클라우드 유출을 원천 방어.
+  - **상수시간 지문 일치 검증**: 소거 시점에 클립보드 내용의 SHA-256 다이제스트를 상수시간(`constant_time_eq_32`)으로 비교하여, 보호 중인 비밀값일 때만 정확히 소거하고 이후 사용자가 복사한 일반 데이터는 덮어쓰지 않고 보존.
+  - **시각적 카운트다운 진행바 & 즉시 소거**: 실시간 터미널 진행바(`[████████░░] 12s`), 비차단 엔터 키 입력 시 즉시 소거, 백그라운드 데몬 및 무음 모드(`--silent`) 지원.
+  - **주요 명령어 직통 연동**: `decrypt`, `decrypt-decoy`, `extract`, `extract-wav`, `totp code` 등 모든 자격증명 출력 명령에 `--clip` 및 `--clip-ttl <초>` 옵션 완전 결합.
 - **RFC 6238 TOTP 2FA 보안 금고 (`totp`)** — 암호화 다중 계정 2단계 인증 엔진:
   - **외부 의존성 제로**: 자체 Base32 코덱(RFC 4648), RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1, SHA-256, SHA-512) 완비 및 RFC 4226 부록 D, RFC 6238 부록 B 테스트 벡터 100% 통과.
   - **하드웨어 귀속 & AEAD 봉인**: 계정 자격증명을 Argon2id + ChaCha20-Poly1305 및 Windows DPAPI로 이중 암호화된 `.svault` 컨테이너에 안전 저장.
@@ -252,6 +278,18 @@ svault totp verify github 123456 --skew 1 --vault totp.svault -p "금고비밀�
 # 17. 계정 목록 조회 및 otpauth:// URI 내보내기
 svault totp list --vault totp.svault -p "금고비밀번호"
 svault totp export github --vault totp.svault -p "금고비밀번호"
+
+# 18. 15초 자동 만료 가드를 적용하여 비밀값을 클립보드에 안전 복사
+svault clip copy "초특급-비밀번호" --ttl 15
+svault clip copy "초특급-비밀번호" --ttl 15 --silent
+
+# 19. 클립보드 메타데이터 상태 확인 및 수동 즉시 완전 소거
+svault clip status
+svault clip clear
+
+# 20. 터미널 노출 및 디스크 평문 저장 없이 클립보드로 직통 복호화
+svault decrypt -i secret.svault -p "금고비밀번호" --clip --clip-ttl 30
+svault totp code github --vault totp.svault -p "금고비밀번호" --clip --clip-ttl 15
 ```
 
 ### 저작권 및 라이선스

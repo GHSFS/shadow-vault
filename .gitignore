@@ -1,0 +1,27 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Local secrets / test vaults
+*.svault
+*.key
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Build artifacts
+*.pdb
+*.exp
+*.lib
+
+# Local automation helper scripts
+/scripts/

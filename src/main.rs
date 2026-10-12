@@ -4,7 +4,9 @@
 
 mod audit;
 mod cli;
+mod clipboard_guard;
 mod crypto;
+
 mod decoy;
 mod error;
 mod shamir;

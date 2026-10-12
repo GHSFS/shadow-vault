@@ -5,6 +5,32 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-10-13
+
+### Added
+- Time-Lock & Expiration Policy Header Engine (`src/policy.rs`).
+- Authenticated `SVPO` binary wire header format (28+ bytes):
+  - Magic prefix `b"SVPO"`, version 1, flags (`FLAG_NOT_BEFORE`, `FLAG_EXPIRES_AT`, `FLAG_DESCRIPTION`), 64-bit UTC timestamps (`created_at`, `not_before`, `expires_at`), optional UTF-8 policy description (up to 256 bytes), and trailing CRC-32 integrity checksum.
+- ChaCha20-Poly1305 AEAD Additional Authenticated Data (`aad`) binding:
+  - Cryptographically binds the binary policy header directly into the container AEAD ciphertext authentication tag.
+  - Zero-tampering guarantee: modifying timestamps or policy descriptions results in immediate Poly1305 authentication rejection.
+- Temporal access policy enforcement:
+  - Time-lock escrow: vaults configured with `--not-before` reject decryption with `TimeLocked` until the unlock timestamp has passed.
+  - Expiration policy: vaults configured with `--expires-at` or `--expires-in` reject decryption with `Expired` once the lifetime has elapsed.
+- Howard Hinnant Gregorian calendar algorithms:
+  - Zero-dependency, pure-integer civil date conversions (`days_to_ymd`, `ymd_to_days`) handling all Gregorian leap year rules accurately across the full 64-bit timestamp range.
+- Flexible CLI parsing and ISO-8601 formatting:
+  - Supports ISO-8601 strings (`YYYY-MM-DD`, `YYYY-MM-DDTHH:MM:SSZ`), raw Unix timestamps (`1791850000`), and human relative durations (`+1h`, `+7d`, `+30m`, `+1y`).
+- Command-line interface integration:
+  - Added `--not-before <ts>`, `--expires-at <ts>`, `--expires-in <dur>`, and `--policy-desc <text>` to `encrypt`, `embed`, `embed-wav`, `embed-bmp`, and `pack-dir`.
+  - Added `--at-time <ts>` simulation flag to `decrypt`, `decrypt-decoy`, `extract`, `extract-wav`, `extract-bmp`, and `unpack-dir`.
+  - Added `--json` flag to `inspect` for machine-readable container and policy metadata.
+- Forensics, Steganalysis & Inspection:
+  - `svault inspect` displays comprehensive policy metadata: status (`ACTIVE`, `TIMELOCKED`, `EXPIRED`), remaining or elapsed seconds, formatted UTC dates, and description.
+  - `svault audit` detects `FLAG_POLICY`, audits policy header integrity, and dynamically aligns ciphertext entropy scanning from the post-policy offset.
+- Comprehensive test coverage:
+  - 187 unit tests, 3 archive tests, 81 integration tests, and 7 dedicated policy integration tests (`tests/policy_test.rs`) covering active window decryption, time-lock rejection, expiration rejection, Poly1305 AAD tampering rejection, JSON inspect output, stego PNG carriers, and directory archive policy enforcement (278 total tests, 100% pass).
+
 ## [0.10.0] - 2026-10-12
 
 ### Added

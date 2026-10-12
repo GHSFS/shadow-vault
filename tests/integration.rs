@@ -14,14 +14,14 @@ fn cli_version_and_help_work() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.10.0"));
+        .stdout(predicate::str::contains("svault 0.11.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
         .arg("-V")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.10.0"));
+        .stdout(predicate::str::contains("svault 0.11.0"));
 
     Command::cargo_bin("svault")
         .unwrap()

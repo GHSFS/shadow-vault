@@ -9,8 +9,9 @@
 //! hardware binding so the container cannot be decrypted off the originating machine.
 
 use crate::error::{Error, Result};
+use crate::policy::PolicyHeader;
 use argon2::{Algorithm, Argon2, Params, Version};
-use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -21,6 +22,7 @@ pub const VERSION: u8 = 1;
 pub const VERSION_V2: u8 = 2;
 pub const FLAG_DPAPI: u8 = 0x01;
 pub const FLAG_DECOY: u8 = 0x02;
+pub const FLAG_POLICY: u8 = 0x04;
 
 pub const SALT_LEN: usize = 16;
 pub const NONCE_LEN: usize = 12;
@@ -33,10 +35,16 @@ pub struct ContainerInfo {
     pub payload_size: usize,
     pub salt_hex: String,
     pub decoy_container: bool,
+    pub policy: Option<PolicyHeader>,
 }
 
-/// Seal plaintext bytes into a `SVLT` v1 encrypted container.
-pub fn seal(plaintext: &[u8], passphrase: &str, bind_dpapi: bool) -> Result<Vec<u8>> {
+/// Seal plaintext bytes into a `SVLT` v1 encrypted container with an optional time/expiration policy.
+pub fn seal_with_policy(
+    plaintext: &[u8],
+    passphrase: &str,
+    bind_dpapi: bool,
+    policy: Option<&PolicyHeader>,
+) -> Result<Vec<u8>> {
     if passphrase.is_empty() {
         return Err(Error::Crypto("passphrase must not be empty".into()));
     }
@@ -50,29 +58,73 @@ pub fn seal(plaintext: &[u8], passphrase: &str, bind_dpapi: bool) -> Result<Vec<
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(&nonce_bytes);
 
-    let ciphertext = cipher
-        .encrypt(nonce, plaintext)
-        .map_err(|_| Error::Crypto("ChaCha20-Poly1305 encryption failed".into()))?;
+    let (policy_wire, flags) = match policy {
+        Some(p) => {
+            let bytes = p.to_bytes();
+            (
+                Some(bytes),
+                (if bind_dpapi { FLAG_DPAPI } else { 0 }) | FLAG_POLICY,
+            )
+        }
+        None => (None, if bind_dpapi { FLAG_DPAPI } else { 0 }),
+    };
 
-    let flags = if bind_dpapi { FLAG_DPAPI } else { 0 };
+    let ciphertext = match &policy_wire {
+        Some(pw) => {
+            let payload = Payload {
+                msg: plaintext,
+                aad: pw.as_slice(),
+            };
+            cipher
+                .encrypt(nonce, payload)
+                .map_err(|_| Error::Crypto("ChaCha20-Poly1305 encryption failed".into()))?
+        }
+        None => cipher
+            .encrypt(nonce, plaintext)
+            .map_err(|_| Error::Crypto("ChaCha20-Poly1305 encryption failed".into()))?,
+    };
+
     let body = if bind_dpapi {
         dpapi_protect(&ciphertext)?
     } else {
         ciphertext
     };
 
-    let mut out = Vec::with_capacity(HEADER_LEN + body.len());
+    let extra_policy_len = if let Some(ref pw) = policy_wire {
+        4 + pw.len()
+    } else {
+        0
+    };
+
+    let mut out = Vec::with_capacity(HEADER_LEN + extra_policy_len + body.len());
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
     out.push(flags);
     out.extend_from_slice(&salt);
     out.extend_from_slice(&nonce_bytes);
+
+    if let Some(ref pw) = policy_wire {
+        let plen = pw.len() as u32;
+        out.extend_from_slice(&plen.to_le_bytes());
+        out.extend_from_slice(pw);
+    }
+
     out.extend_from_slice(&body);
     Ok(out)
 }
 
-/// Open a `SVLT` v1 or v2/decoy container and return the authenticated plaintext.
+/// Seal plaintext bytes into a `SVLT` v1 encrypted container.
+pub fn seal(plaintext: &[u8], passphrase: &str, bind_dpapi: bool) -> Result<Vec<u8>> {
+    seal_with_policy(plaintext, passphrase, bind_dpapi, None)
+}
+
+/// Open a `SVLT` v1 or v2/decoy container at the current time and return the authenticated plaintext.
 pub fn open(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    open_at(container, passphrase, None)
+}
+
+/// Open a `SVLT` container and enforce policy validation at the specified UTC timestamp (or current time if None).
+pub fn open_at(container: &[u8], passphrase: &str, at_time: Option<u64>) -> Result<Vec<u8>> {
     if passphrase.is_empty() {
         return Err(Error::Crypto("passphrase must not be empty".into()));
     }
@@ -103,8 +155,35 @@ pub fn open(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
 
     let salt = &container[6..6 + SALT_LEN];
     let nonce_bytes = &container[6 + SALT_LEN..HEADER_LEN];
-    let body = &container[HEADER_LEN..];
 
+    let (policy_wire, body_offset) = if (flags & FLAG_POLICY) != 0 {
+        if container.len() < HEADER_LEN + 4 {
+            return Err(Error::Format("container policy header truncated".into()));
+        }
+        let policy_len = u32::from_le_bytes(
+            container[HEADER_LEN..HEADER_LEN + 4]
+                .try_into()
+                .map_err(|_| Error::Format("failed to read policy length".into()))?,
+        ) as usize;
+        let policy_start = HEADER_LEN + 4;
+        let policy_end = policy_start
+            .checked_add(policy_len)
+            .ok_or_else(|| Error::Format("policy length integer overflow".into()))?;
+        if container.len() < policy_end + 16 {
+            return Err(Error::Format(
+                "container truncated within policy or body".into(),
+            ));
+        }
+        let p_bytes = &container[policy_start..policy_end];
+        let policy = PolicyHeader::from_bytes(p_bytes)?;
+        let check_time = at_time.unwrap_or_else(crate::policy::current_utc_timestamp);
+        policy.validate_at(check_time)?;
+        (Some(p_bytes), policy_end)
+    } else {
+        (None, HEADER_LEN)
+    };
+
+    let body = &container[body_offset..];
     let ciphertext = if (flags & FLAG_DPAPI) != 0 {
         dpapi_unprotect(body)?
     } else {
@@ -115,9 +194,22 @@ pub fn open(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(nonce_bytes);
 
-    cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|_| {
-        Error::Crypto("authentication failed — wrong passphrase or tampered container".into())
-    })
+    match policy_wire {
+        Some(pw) => {
+            let payload = Payload {
+                msg: ciphertext.as_ref(),
+                aad: pw,
+            };
+            cipher.decrypt(nonce, payload).map_err(|_| {
+                Error::Crypto(
+                    "authentication failed — wrong passphrase or tampered container/policy".into(),
+                )
+            })
+        }
+        None => cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|_| {
+            Error::Crypto("authentication failed — wrong passphrase or tampered container".into())
+        }),
+    }
 }
 
 /// Inspect a `SVLT` container header without decrypting it.
@@ -143,7 +235,33 @@ pub fn inspect(container: &[u8]) -> Result<ContainerInfo> {
 
     let salt = &container[6..6 + SALT_LEN];
     let salt_hex = salt.iter().map(|b| format!("{b:02x}")).collect::<String>();
-    let body_len = container.len() - HEADER_LEN;
+
+    let (policy, body_offset) = if (flags & FLAG_POLICY) != 0 {
+        if container.len() < HEADER_LEN + 4 {
+            return Err(Error::Format("container policy header truncated".into()));
+        }
+        let policy_len = u32::from_le_bytes(
+            container[HEADER_LEN..HEADER_LEN + 4]
+                .try_into()
+                .map_err(|_| Error::Format("failed to read policy length".into()))?,
+        ) as usize;
+        let policy_start = HEADER_LEN + 4;
+        let policy_end = policy_start
+            .checked_add(policy_len)
+            .ok_or_else(|| Error::Format("policy length integer overflow".into()))?;
+        if container.len() < policy_end + 16 {
+            return Err(Error::Format(
+                "container truncated within policy or body".into(),
+            ));
+        }
+        let p_bytes = &container[policy_start..policy_end];
+        let parsed_policy = PolicyHeader::from_bytes(p_bytes)?;
+        (Some(parsed_policy), policy_end)
+    } else {
+        (None, HEADER_LEN)
+    };
+
+    let body_len = container.len().saturating_sub(body_offset);
 
     Ok(ContainerInfo {
         version,
@@ -151,6 +269,7 @@ pub fn inspect(container: &[u8]) -> Result<ContainerInfo> {
         payload_size: body_len.saturating_sub(16),
         salt_hex,
         decoy_container: false,
+        policy,
     })
 }
 

@@ -87,6 +87,12 @@
   - **Transparent Carrier & Armor Extraction**: `unpack-dir` automatically dearmors `.svault.asc` documents and extracts from PNG, WAV, or BMP stego carriers.
 - **Universal Carrier Capacity Estimation (`capacity`)** — calculates total carrier capacity, usable payload capacity, and stego overhead bytes across `.bmp`, `.wav`, and `.png` carriers with optional `--json` machine-readable output.
 - **Zero-Knowledge Header Inspection (`inspect`)** — view container version, DPAPI binding flag, decoy container presence, payload byte size, and salt hex across `.svault`, `.png`, `.wav`, and `.bmp` files without decrypting or exposing hidden slot sizes.
+- **Time-Lock & Expiration Policy Headers (`policy`)** — embed cryptographically bound temporal access policies directly into encrypted containers:
+  - **Authenticated Policy Header (`SVPO`)**: 28-byte canonical header with magic `SVPO`, version 1, flags (`HAS_NOT_BEFORE`, `HAS_EXPIRES_AT`, `HAS_DESCRIPTION`), `created_at`, `not_before`, `expires_at`, optional UTF-8 description, and CRC-32 validation.
+  - **AEAD AAD Binding**: the entire binary policy block is injected as Additional Authenticated Data (`aad`) into ChaCha20-Poly1305. Any modification or tampering with policy timestamps or descriptions invalidates the Poly1305 MAC tag and causes immediate authentication failure.
+  - **Temporal Access Enforcement**: vaults sealed with `--not-before` refuse decryption with `TimeLocked` until the threshold is reached; vaults sealed with `--expires-at` or `--expires-in` refuse decryption with `Expired` once the lifetime has elapsed.
+  - **Flexible Temporal Syntax**: accepts Unix epoch seconds (`1791850000`), ISO-8601 UTC date/time (`2026-10-15T00:00:00Z`, `2026-12-31`), or relative durations (`+1h`, `+7d`, `+30m`, `+1y`).
+  - **Inspection & Auditing Integration**: `inspect` displays policy status (`ACTIVE`, `TIMELOCKED`, `EXPIRED`), remaining or elapsed seconds, human-readable UTC timestamps, and description, with full `--json` support. `audit` parses policy headers and tracks ciphertext entropy offsets accordingly.
 - **3-Pass Secure File Shredder (`shred`)** — overwrites sensitive plaintext files with `0x00`, `0xFF`, and CSPRNG random bytes before unlinking.
 - **Single Static Binary** — compiled with `+crt-static`, `opt-level = "z"`, LTO, and stripped symbols. Zero external runtime dependencies.
 
@@ -212,6 +218,20 @@ svault pack-dir -i ./my_project -o project.svault.asc -p "pack-passphrase" --arm
 svault unpack-dir -i project.svault -p "pack-passphrase" --list
 svault unpack-dir -i project.svault -p "pack-passphrase" --verify-only
 svault unpack-dir -i project.svault -o ./restored_project -p "pack-passphrase" --overwrite
+
+# 31. Encrypt with time-lock escrow (cannot be opened until future date)
+svault encrypt -i escrow.txt -o escrow.svault -p "vault-pass" --not-before "2026-12-31T00:00:00Z" --policy-desc "Year-End Escrow"
+
+# 32. Encrypt with auto-expiring policy (expires in 2 hours or specific ISO date)
+svault encrypt -i token.txt -o token.svault -p "vault-pass" --expires-in 2h --policy-desc "Session Token"
+svault encrypt -i doc.txt -o doc.svault -p "vault-pass" --expires-at "2026-10-15"
+
+# 33. Inspect policy metadata without decrypting (human-readable and JSON)
+svault inspect escrow.svault
+svault inspect escrow.svault --json
+
+# 34. Decrypt testing against an explicit reference timestamp
+svault decrypt -i escrow.svault -o restored.txt -p "vault-pass" --at-time "2027-01-01"
 ```
 
 ### License & Attribution
@@ -296,6 +316,12 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
   - **투명한 캐리어 & 아머 자동 해제**: `unpack-dir` 실행 시 `.svault.asc` 아머드 문서 및 PNG/WAV/BMP 스테가노그래피 캐리어로부터 컨테이너를 전자동 추출.
 - **범용 캐리어 용량 측정 (`capacity`)** — `.bmp`, `.wav`, `.png` 미디어의 전체 바이트, 순수 은닉 가용 용량, 12바이트 스테고 봉투 오버헤드를 정밀 계산하며 파이프라인 연동용 `--json` 출력 지원.
 - **컨테이너 헤더 검사 (`inspect`)** — 복호화 없이 `.svault`, `.png`, `.wav`, `.bmp` 파일의 컨테이너 버전, DPAPI 귀속 여부, 미끼 컨테이너 여부, 페이로드 크기, 솔트 값을 즉시 확인합니다 (은닉 슬롯의 크기는 은폐).
+- **시간 잠금 및 자동 만료 정책 헤더 (`policy`)** — 암호화 컨테이너에 시간 기반 접근 제어 정책을 암호학적으로 바인딩:
+  - **인증된 정책 헤더 (`SVPO`)**: 매직 `SVPO`, 버전 1, 플래그(`HAS_NOT_BEFORE`, `HAS_EXPIRES_AT`, `HAS_DESCRIPTION`), `created_at`, `not_before`, `expires_at`, 임의 설명(최대 256B) 및 CRC-32 무결성 검증을 포함하는 표준 28바이트 바이너리 헤더.
+  - **AEAD 연관 데이터(AAD) 완벽 결속**: 직렬화된 정책 헤더 전체가 ChaCha20-Poly1305의 추가 인증 데이터(`aad`)로 주입되어, 타임스탬프나 설명이 단 1비트라도 변조되면 Poly1305 MAC 검증 실패로 복호화가 원천 차단됩니다.
+  - **시점 기반 접근 제어**: `--not-before`로 지정된 시점 이전에는 `TimeLocked` 에러로 복호화가 거부되며, `--expires-at` 또는 `--expires-in`으로 설정된 수명이 만료되면 `Expired` 에러로 즉시 무효화됩니다.
+  - **유연한 시간 표기법**: 유닉스 타임스탬프(`1791850000`), ISO-8601 UTC 날짜/일시(`2026-10-15T00:00:00Z`, `2026-12-31`), 상대 기간(`+1h`, `+7d`, `+30m`, `+1y`)을 자유롭게 지원.
+  - **검사 및 감사 연동**: `inspect` 명령어로 활성 여부(`ACTIVE`, `TIMELOCKED`, `EXPIRED`), 잔여/초과 시간, UTC 일시 및 설명을 확인 가능하며(`--json` 지원), `audit` 명령어가 정책 헤더 오프셋을 자동 감지하여 엔트로피를 정밀 분석합니다.
 - **다중 패스 완전 파쇄 (`shred`)** — 원본 평문 파일을 삭제할 때 `0x00` ➔ `0xFF` ➔ 난수 덮어쓰기 후 디스크 동기화 및 길이 0 절삭을 수행해 포렌식 복구를 차단합니다.
 
 ### 사용법 요약
@@ -407,6 +433,20 @@ svault pack-dir -i ./my_project -o project.svault.asc -p "금고비밀번호" --
 svault unpack-dir -i project.svault -p "금고비밀번호" --list
 svault unpack-dir -i project.svault -p "금고비밀번호" --verify-only
 svault unpack-dir -i project.svault -o ./restored_project -p "금고비밀번호" --overwrite
+
+# 31. 미래 지정 시점까지 복호화를 거부하는 에스크로 시간 잠금 금고 생성
+svault encrypt -i escrow.txt -o escrow.svault -p "금고비밀번호" --not-before "2026-12-31T00:00:00Z" --policy-desc "연말 해제 에스크로"
+
+# 32. 2시간 뒤 자동 만료되거나 특정 날짜에 만료되는 금고 생성
+svault encrypt -i token.txt -o token.svault -p "금고비밀번호" --expires-in 2h --policy-desc "단기 세션 토큰"
+svault encrypt -i doc.txt -o doc.svault -p "금고비밀번호" --expires-at "2026-10-15"
+
+# 33. 복호화 없이 정책 헤더 및 만료 상태 점검 (터미널 텍스트 및 JSON)
+svault inspect escrow.svault
+svault inspect escrow.svault --json
+
+# 34. 특정 기준 시점(--at-time)으로 복호화 시뮬레이션 및 검증
+svault decrypt -i escrow.svault -o restored.txt -p "금고비밀번호" --at-time "2027-01-01"
 ```
 
 ### 저작권 및 라이선스

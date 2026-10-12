@@ -49,6 +49,22 @@ pub enum Commands {
         /// Bind container to the current Windows user/machine via DPAPI
         #[arg(long)]
         dpapi: bool,
+
+        /// Time-lock activation timestamp or relative offset (e.g. "2026-10-15T00:00:00Z", "+1h")
+        #[arg(long = "not-before")]
+        not_before: Option<String>,
+
+        /// Expiration timestamp after which decryption is refused (e.g. "2026-12-31T23:59:59Z")
+        #[arg(long = "expires-at")]
+        expires_at: Option<String>,
+
+        /// Expiration duration from now (e.g. "24h", "7d", "30d", "3600s")
+        #[arg(long = "expires-in")]
+        expires_in: Option<String>,
+
+        /// Optional descriptive label or policy comment
+        #[arg(long = "policy-desc")]
+        policy_desc: Option<String>,
     },
 
     /// Encrypt a dual-password container with primary hidden secret and plausible decoy
@@ -109,6 +125,10 @@ pub enum Commands {
         /// Auto-expiring clipboard time-to-live in seconds (default: 15)
         #[arg(long = "clip-ttl", default_value_t = 15)]
         clip_ttl: u64,
+
+        /// Optional simulated reference UTC timestamp for policy validation
+        #[arg(long = "at-time")]
+        at_time: Option<String>,
     },
 
     /// Decrypt a plausible deniability container (seamless or explicit decoy passphrase)
@@ -137,6 +157,10 @@ pub enum Commands {
         /// Auto-expiring clipboard time-to-live in seconds (default: 15)
         #[arg(long = "clip-ttl", default_value_t = 15)]
         clip_ttl: u64,
+
+        /// Optional simulated reference UTC timestamp for policy validation
+        #[arg(long = "at-time")]
+        at_time: Option<String>,
     },
 
     /// Encrypt and hide a secret file inside a PNG carrier image
@@ -173,6 +197,22 @@ pub enum Commands {
         /// Bind hidden payload to the current Windows user/machine via DPAPI
         #[arg(long)]
         dpapi: bool,
+
+        /// Time-lock activation timestamp or relative offset (e.g. "2026-10-15T00:00:00Z", "+1h")
+        #[arg(long = "not-before")]
+        not_before: Option<String>,
+
+        /// Expiration timestamp after which decryption is refused (e.g. "2026-12-31T23:59:59Z")
+        #[arg(long = "expires-at")]
+        expires_at: Option<String>,
+
+        /// Expiration duration from now (e.g. "24h", "7d", "30d", "3600s")
+        #[arg(long = "expires-in")]
+        expires_in: Option<String>,
+
+        /// Optional descriptive label or policy comment
+        #[arg(long = "policy-desc")]
+        policy_desc: Option<String>,
     },
 
     /// Extract and decrypt a secret file from a stego PNG image
@@ -201,6 +241,10 @@ pub enum Commands {
         /// Auto-expiring clipboard time-to-live in seconds (default: 15)
         #[arg(long = "clip-ttl", default_value_t = 15)]
         clip_ttl: u64,
+
+        /// Optional simulated reference UTC timestamp for policy validation
+        #[arg(long = "at-time")]
+        at_time: Option<String>,
     },
 
     /// Encrypt and hide a secret file inside a WAV audio carrier
@@ -245,6 +289,22 @@ pub enum Commands {
         /// Bind hidden payload to the current Windows user/machine via DPAPI
         #[arg(long)]
         dpapi: bool,
+
+        /// Time-lock activation timestamp or relative offset (e.g. "2026-10-15T00:00:00Z", "+1h")
+        #[arg(long = "not-before")]
+        not_before: Option<String>,
+
+        /// Expiration timestamp after which decryption is refused (e.g. "2026-12-31T23:59:59Z")
+        #[arg(long = "expires-at")]
+        expires_at: Option<String>,
+
+        /// Expiration duration from now (e.g. "24h", "7d", "30d", "3600s")
+        #[arg(long = "expires-in")]
+        expires_in: Option<String>,
+
+        /// Optional descriptive label or policy comment
+        #[arg(long = "policy-desc")]
+        policy_desc: Option<String>,
     },
 
     /// Extract and decrypt a secret file from a stego WAV audio file
@@ -281,6 +341,10 @@ pub enum Commands {
         /// Auto-expiring clipboard time-to-live in seconds (default: 15)
         #[arg(long = "clip-ttl", default_value_t = 15)]
         clip_ttl: u64,
+
+        /// Optional simulated reference UTC timestamp for policy validation
+        #[arg(long = "at-time")]
+        at_time: Option<String>,
     },
 
     /// Encrypt and hide a secret file inside a 24-bit uncompressed BMP carrier image
@@ -317,6 +381,22 @@ pub enum Commands {
         /// Bind hidden payload to the current Windows user/machine via DPAPI
         #[arg(long)]
         dpapi: bool,
+
+        /// Time-lock activation timestamp or relative offset (e.g. "2026-10-15T00:00:00Z", "+1h")
+        #[arg(long = "not-before")]
+        not_before: Option<String>,
+
+        /// Expiration timestamp after which decryption is refused (e.g. "2026-12-31T23:59:59Z")
+        #[arg(long = "expires-at")]
+        expires_at: Option<String>,
+
+        /// Expiration duration from now (e.g. "24h", "7d", "30d", "3600s")
+        #[arg(long = "expires-in")]
+        expires_in: Option<String>,
+
+        /// Optional descriptive label or policy comment
+        #[arg(long = "policy-desc")]
+        policy_desc: Option<String>,
     },
 
     /// Extract and decrypt a secret file from a stego BMP image
@@ -345,6 +425,10 @@ pub enum Commands {
         /// Auto-expiring clipboard time-to-live in seconds (default: 15)
         #[arg(long = "clip-ttl", default_value_t = 15)]
         clip_ttl: u64,
+
+        /// Optional simulated reference UTC timestamp for policy validation
+        #[arg(long = "at-time")]
+        at_time: Option<String>,
     },
 
     /// Estimate and display steganographic data storage capacity for a carrier file
@@ -363,6 +447,10 @@ pub enum Commands {
     Inspect {
         /// Target .svault, .png, .wav, or .bmp file
         input: PathBuf,
+
+        /// Output inspection report in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Securely overwrite and destroy a sensitive file (3-pass shred)
@@ -572,6 +660,22 @@ pub enum Commands {
         #[arg(short, long)]
         list: bool,
 
+        /// Time-lock activation timestamp or relative offset (e.g. "2026-10-15T00:00:00Z", "+1h")
+        #[arg(long = "not-before")]
+        not_before: Option<String>,
+
+        /// Expiration timestamp after which decryption is refused (e.g. "2026-12-31T23:59:59Z")
+        #[arg(long = "expires-at")]
+        expires_at: Option<String>,
+
+        /// Expiration duration from now (e.g. "24h", "7d", "30d", "3600s")
+        #[arg(long = "expires-in")]
+        expires_in: Option<String>,
+
+        /// Optional descriptive label or policy comment
+        #[arg(long = "policy-desc")]
+        policy_desc: Option<String>,
+
         /// Output summary report in structured JSON format
         #[arg(long)]
         json: bool,
@@ -603,6 +707,10 @@ pub enum Commands {
         /// Overwrite existing destination files
         #[arg(long)]
         overwrite: bool,
+
+        /// Optional simulated reference UTC timestamp for policy validation
+        #[arg(long = "at-time")]
+        at_time: Option<String>,
 
         /// Output archive listing or verification report in structured JSON format
         #[arg(long)]

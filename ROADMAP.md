@@ -16,16 +16,17 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [x] **24-bit BMP Pixel LSB Carrier Engine (`src/bmp.rs`)** — Bit-level R/G/B least-significant-bit steganography across uncompressed 24-bit `.bmp` images with scanline padding preservation and capacity estimation (`svault capacity`).
 - [x] **Reed-Solomon Error-Correcting Armor (`src/armor.rs`)** — Cauchy MDS Reed-Solomon parity stripes over GF(256) and PEM-style `.svault.asc` ASCII armoring (`svault armor`, `svault dearmor`, `svault repair`) to recover vaults from bit rot or transport corruption.
 - [x] **Directory & Multi-File Manifest Packing (`src/archive.rs`)** — Pack entire directory trees with relative paths, zip bomb defenses, path traversal protection, and per-file SHA-256 digests into a single sealed `SVLT` container (`svault pack-dir` / `svault unpack-dir`).
+- [x] **Time-Lock & Expiration Policy Headers (`src/policy.rs`)** — Authenticate `not_before` and `expires_at` UTC timestamps via ChaCha20-Poly1305 AEAD additional authenticated data (`aad`) with Howard Hinnant calendar conversions, ISO-8601 formatting/parsing, and temporal access policy enforcement (`--not-before`, `--expires-at`, `--expires-in`, `--at-time`).
 
 ---
 
 ## Planned Milestones
 
 ### Archive & Container Management
-- [ ] **Time-Lock & Expiration Policy Headers (`src/policy.rs`)** — Authenticate `not_before` and `expires_at` UTC timestamps via AEAD additional data so expired containers refuse decryption.
 - [ ] **Keyfile + Passphrase Two-Factor Derivation (`src/keyfile.rs`)** — Combine external hardware or USB keyfiles (`--keyfile <path>`) with user passphrases via HMAC-SHA256 pre-hashing prior to Argon2id.
 - [ ] **Chunked Streaming Encryption for Multi-GB Files (`src/stream.rs`)** — 4 MiB authenticated chunk streaming with per-chunk nonce derivation for constant $O(1)$ memory usage on large archives.
 - [ ] **Container Re-Key & Passphrase Rotation (`svault rotate`)** — Atomically re-encrypt existing `.svault` or stego carriers with fresh salts, nonces, and updated passphrases.
+- [ ] **PKCS#11 Smartcard & YubiKey PIV Key Binding (`src/piv.rs`)** — Decrypt vaults using RSA/EC private keys stored on hardware security tokens via PKCS#11 / Windows PIV minidriver (`--piv-slot`).
 - [ ] **Detached Integrity Manifest & Canary Verification (`src/canary.rs`)** — Generate and verify signed SHA-256 tamper canaries across vault directories (`svault canary init` / `svault canary verify`).
 - [ ] **Interactive In-Memory Vault Shell (`svault repl`)** — Unlock a key-value secret store once in non-pageable memory and query or update entries interactively without touching disk in plaintext.
 

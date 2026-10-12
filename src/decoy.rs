@@ -565,6 +565,7 @@ pub fn inspect_decoy(container: &[u8]) -> Result<ContainerInfo> {
         payload_size: decoy_body_len.saturating_sub(16),
         salt_hex,
         decoy_container: true,
+        policy: None,
     })
 }
 

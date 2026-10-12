@@ -9,9 +9,9 @@ mod bmp;
 mod cli;
 mod clipboard_guard;
 mod crypto;
-
 mod decoy;
 mod error;
+mod policy;
 mod shamir;
 mod shred;
 mod stego;
@@ -27,6 +27,51 @@ use std::io::{Read, Write};
 use std::path::Path;
 use zeroize::Zeroize;
 
+fn parse_cli_policy(
+    not_before: Option<&str>,
+    expires_at: Option<&str>,
+    expires_in: Option<&str>,
+    policy_desc: Option<&str>,
+) -> Result<Option<policy::PolicyHeader>> {
+    let now = policy::current_utc_timestamp();
+    let nb = if let Some(nb_str) = not_before {
+        Some(policy::parse_timestamp_or_duration(nb_str, now)?)
+    } else {
+        None
+    };
+
+    let exp = if let Some(exp_str) = expires_at {
+        Some(policy::parse_timestamp_or_duration(exp_str, now)?)
+    } else if let Some(in_str) = expires_in {
+        let dur = policy::parse_duration(in_str)?;
+        Some(
+            now.checked_add(dur)
+                .ok_or_else(|| anyhow::anyhow!("expiration timestamp overflow"))?,
+        )
+    } else {
+        None
+    };
+
+    if nb.is_none() && exp.is_none() && policy_desc.is_none() {
+        return Ok(None);
+    }
+
+    let desc = policy_desc.map(|s| s.to_string());
+    let pol = policy::PolicyHeader::new(nb, exp, desc)?;
+    Ok(Some(pol))
+}
+
+fn parse_cli_at_time(at_time: Option<&str>) -> Result<Option<u64>> {
+    match at_time {
+        Some(s) => {
+            let now = policy::current_utc_timestamp();
+            let ts = policy::parse_timestamp_or_duration(s, now)?;
+            Ok(Some(ts))
+        }
+        None => Ok(None),
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -39,9 +84,19 @@ fn main() -> Result<()> {
             decoy_passphrase,
             padding,
             dpapi,
+            not_before,
+            expires_at,
+            expires_in,
+            policy_desc,
         } => {
             let raw = fs::read(&input)
                 .with_context(|| format!("failed to read input file: {}", input.display()))?;
+            let policy = parse_cli_policy(
+                not_before.as_deref(),
+                expires_at.as_deref(),
+                expires_in.as_deref(),
+                policy_desc.as_deref(),
+            )?;
             let sealed = if let Some(decoy_path) = decoy {
                 let d_pass = decoy_passphrase.ok_or_else(|| {
                     anyhow::anyhow!("--decoy-passphrase is required when --decoy is specified")
@@ -53,16 +108,24 @@ fn main() -> Result<()> {
             } else if padding > 0 {
                 decoy::seal_v2(&raw, &passphrase, dpapi, padding)?
             } else {
-                crypto::seal(&raw, &passphrase, dpapi)?
+                crypto::seal_with_policy(&raw, &passphrase, dpapi, policy.as_ref())?
             };
             fs::write(&output, &sealed)
                 .with_context(|| format!("failed to write container: {}", output.display()))?;
+            let policy_msg = match policy {
+                Some(ref p) => format!(
+                    " policy={}",
+                    p.status_summary(policy::current_utc_timestamp())
+                ),
+                None => String::new(),
+            };
             println!(
-                "{} encrypted {} bytes -> {} (dpapi={})",
+                "{} encrypted {} bytes -> {} (dpapi={}{})",
                 "ok".green().bold(),
                 raw.len(),
                 output.display(),
-                dpapi
+                dpapi,
+                policy_msg
             );
         }
         Commands::EncryptDecoy {
@@ -104,6 +167,7 @@ fn main() -> Result<()> {
             decoy_passphrase,
             clip,
             clip_ttl,
+            at_time,
         }
         | Commands::DecryptDecoy {
             input,
@@ -112,6 +176,7 @@ fn main() -> Result<()> {
             decoy_passphrase,
             clip,
             clip_ttl,
+            at_time,
         } => {
             let raw_container = fs::read(&input)
                 .with_context(|| format!("failed to read container: {}", input.display()))?;
@@ -122,14 +187,15 @@ fn main() -> Result<()> {
             } else {
                 raw_container
             };
+            let at_time_val = parse_cli_at_time(at_time.as_deref())?;
             let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&container) {
                     decoy::open_decoy_explicit(&container, passphrase.as_deref(), Some(&d_pass))?
                 } else {
-                    crypto::open(&container, &d_pass)?
+                    crypto::open_at(&container, &d_pass, at_time_val)?
                 }
             } else if let Some(p) = passphrase {
-                crypto::open(&container, &p)?
+                crypto::open_at(&container, &p, at_time_val)?
             } else {
                 anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
             };
@@ -177,11 +243,21 @@ fn main() -> Result<()> {
             decoy_passphrase,
             padding,
             dpapi,
+            not_before,
+            expires_at,
+            expires_in,
+            policy_desc,
         } => {
             let png = fs::read(&carrier)
                 .with_context(|| format!("failed to read carrier PNG: {}", carrier.display()))?;
             let raw_secret = fs::read(&secret)
                 .with_context(|| format!("failed to read secret file: {}", secret.display()))?;
+            let policy = parse_cli_policy(
+                not_before.as_deref(),
+                expires_at.as_deref(),
+                expires_in.as_deref(),
+                policy_desc.as_deref(),
+            )?;
             let sealed = if let Some(decoy_path) = decoy {
                 let d_pass = decoy_passphrase.ok_or_else(|| {
                     anyhow::anyhow!("--decoy-passphrase is required when --decoy is specified")
@@ -200,7 +276,7 @@ fn main() -> Result<()> {
             } else if padding > 0 {
                 decoy::seal_v2(&raw_secret, &passphrase, dpapi, padding)?
             } else {
-                crypto::seal(&raw_secret, &passphrase, dpapi)?
+                crypto::seal_with_policy(&raw_secret, &passphrase, dpapi, policy.as_ref())?
             };
             let stego_png = stego::embed_in_png(&png, &sealed)?;
             fs::write(&output, &stego_png)
@@ -219,18 +295,20 @@ fn main() -> Result<()> {
             decoy_passphrase,
             clip,
             clip_ttl,
+            at_time,
         } => {
             let png = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego PNG: {}", carrier.display()))?;
             let sealed = stego::extract_from_png(&png)?;
+            let at_time_val = parse_cli_at_time(at_time.as_deref())?;
             let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&sealed) {
                     decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
                 } else {
-                    crypto::open(&sealed, &d_pass)?
+                    crypto::open_at(&sealed, &d_pass, at_time_val)?
                 }
             } else if let Some(p) = passphrase {
-                crypto::open(&sealed, &p)?
+                crypto::open_at(&sealed, &p, at_time_val)?
             } else {
                 anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
             };
@@ -281,11 +359,21 @@ fn main() -> Result<()> {
             decoy_passphrase,
             padding,
             dpapi,
+            not_before,
+            expires_at,
+            expires_in,
+            policy_desc,
         } => {
             let wav_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read carrier WAV: {}", carrier.display()))?;
             let raw_secret = fs::read(&secret)
                 .with_context(|| format!("failed to read secret file: {}", secret.display()))?;
+            let policy = parse_cli_policy(
+                not_before.as_deref(),
+                expires_at.as_deref(),
+                expires_in.as_deref(),
+                policy_desc.as_deref(),
+            )?;
             let sealed = if let Some(decoy_path) = decoy {
                 let d_pass = decoy_passphrase.ok_or_else(|| {
                     anyhow::anyhow!("--decoy-passphrase is required when --decoy is specified")
@@ -304,7 +392,7 @@ fn main() -> Result<()> {
             } else if padding > 0 {
                 decoy::seal_v2(&raw_secret, &passphrase, dpapi, padding)?
             } else {
-                crypto::seal(&raw_secret, &passphrase, dpapi)?
+                crypto::seal_with_policy(&raw_secret, &passphrase, dpapi, policy.as_ref())?
             };
             let effective_mode = if lsb { wav::WavMode::Lsb } else { mode };
             let stego_wav = wav::embed_in_wav(&wav_bytes, &sealed, effective_mode)?;
@@ -327,19 +415,21 @@ fn main() -> Result<()> {
             lsb,
             clip,
             clip_ttl,
+            at_time,
         } => {
             let wav_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego WAV: {}", carrier.display()))?;
             let effective_mode = if lsb { wav::ExtractWavMode::Lsb } else { mode };
             let sealed = wav::extract_from_wav(&wav_bytes, effective_mode)?;
+            let at_time_val = parse_cli_at_time(at_time.as_deref())?;
             let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&sealed) {
                     decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
                 } else {
-                    crypto::open(&sealed, &d_pass)?
+                    crypto::open_at(&sealed, &d_pass, at_time_val)?
                 }
             } else if let Some(p) = passphrase {
-                crypto::open(&sealed, &p)?
+                crypto::open_at(&sealed, &p, at_time_val)?
             } else {
                 anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
             };
@@ -388,11 +478,21 @@ fn main() -> Result<()> {
             decoy_passphrase,
             padding,
             dpapi,
+            not_before,
+            expires_at,
+            expires_in,
+            policy_desc,
         } => {
             let bmp_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read carrier BMP: {}", carrier.display()))?;
             let raw_secret = fs::read(&secret)
                 .with_context(|| format!("failed to read secret file: {}", secret.display()))?;
+            let policy = parse_cli_policy(
+                not_before.as_deref(),
+                expires_at.as_deref(),
+                expires_in.as_deref(),
+                policy_desc.as_deref(),
+            )?;
             let sealed = if let Some(decoy_path) = decoy {
                 let d_pass = decoy_passphrase.ok_or_else(|| {
                     anyhow::anyhow!("--decoy-passphrase is required when --decoy is specified")
@@ -411,7 +511,7 @@ fn main() -> Result<()> {
             } else if padding > 0 {
                 decoy::seal_v2(&raw_secret, &passphrase, dpapi, padding)?
             } else {
-                crypto::seal(&raw_secret, &passphrase, dpapi)?
+                crypto::seal_with_policy(&raw_secret, &passphrase, dpapi, policy.as_ref())?
             };
             let stego_bmp = bmp::embed_in_bmp(&bmp_bytes, &sealed)?;
             fs::write(&output, &stego_bmp)
@@ -430,18 +530,20 @@ fn main() -> Result<()> {
             decoy_passphrase,
             clip,
             clip_ttl,
+            at_time,
         } => {
             let bmp_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego BMP: {}", carrier.display()))?;
             let sealed = bmp::extract_from_bmp(&bmp_bytes)?;
+            let at_time_val = parse_cli_at_time(at_time.as_deref())?;
             let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&sealed) {
                     decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
                 } else {
-                    crypto::open(&sealed, &d_pass)?
+                    crypto::open_at(&sealed, &d_pass, at_time_val)?
                 }
             } else if let Some(p) = passphrase {
-                crypto::open(&sealed, &p)?
+                crypto::open_at(&sealed, &p, at_time_val)?
             } else {
                 anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
             };
@@ -607,7 +709,7 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Inspect { input } => {
+        Commands::Inspect { input, json } => {
             let raw = fs::read(&input)
                 .with_context(|| format!("failed to read file: {}", input.display()))?;
             let (container, armor_meta) = if armor::is_armored(&raw) {
@@ -628,28 +730,102 @@ fn main() -> Result<()> {
                 (raw, None)
             };
 
-            if let Some(ref meta) = armor_meta {
-                println!("armored_container: true");
-                println!("armor_version:     {}", meta.version);
-                println!("armor_mode:        {}", meta.mode);
-                println!("data_stripes:      {}", meta.data_stripes);
-                println!("parity_stripes:    {}", meta.parity_stripes);
-                println!("original_length:   {}", meta.original_length);
-                println!("stripe_size:       {}", meta.stripe_size);
-                println!("payload_hash:      {}", meta.payload_hash);
-                let intact = meta.stripes.iter().filter(|s| s.valid).count();
-                println!("intact_stripes:    {}/{}", intact, meta.stripes.len());
-            }
+            if json {
+                let info = if container.starts_with(b"SVLT") || armor_meta.is_none() {
+                    Some(crypto::inspect(&container)?)
+                } else {
+                    None
+                };
+                let mut out = serde_json::json!({
+                    "target_file": input.display().to_string(),
+                });
+                if let Some(ref meta) = armor_meta {
+                    let intact = meta.stripes.iter().filter(|s| s.valid).count();
+                    out["armored"] = serde_json::json!({
+                        "version": meta.version,
+                        "mode": meta.mode,
+                        "data_stripes": meta.data_stripes,
+                        "parity_stripes": meta.parity_stripes,
+                        "original_length": meta.original_length,
+                        "stripe_size": meta.stripe_size,
+                        "payload_hash": meta.payload_hash,
+                        "intact_stripes": intact,
+                        "total_stripes": meta.stripes.len(),
+                    });
+                }
+                if let Some(ref inf) = info {
+                    out["container_version"] = serde_json::json!(inf.version);
+                    out["dpapi_bound"] = serde_json::json!(inf.dpapi_bound);
+                    out["payload_bytes"] = serde_json::json!(inf.payload_size);
+                    out["salt_hex"] = serde_json::json!(inf.salt_hex);
+                    out["decoy_container"] = serde_json::json!(inf.decoy_container);
+                    if let Some(ref pol) = inf.policy {
+                        let now = policy::current_utc_timestamp();
+                        out["policy"] = serde_json::json!({
+                            "status": pol.status_at(now),
+                            "status_summary": pol.status_summary(now),
+                            "created_at": pol.created_at,
+                            "created_at_iso": pol.format_created_at(),
+                            "not_before": pol.not_before,
+                            "not_before_iso": pol.format_not_before(),
+                            "expires_at": pol.expires_at,
+                            "expires_at_iso": pol.format_expires_at(),
+                            "description": pol.description,
+                        });
+                    }
+                }
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                if let Some(ref meta) = armor_meta {
+                    println!("armored_container: true");
+                    println!("armor_version:     {}", meta.version);
+                    println!("armor_mode:        {}", meta.mode);
+                    println!("data_stripes:      {}", meta.data_stripes);
+                    println!("parity_stripes:    {}", meta.parity_stripes);
+                    println!("original_length:   {}", meta.original_length);
+                    println!("stripe_size:       {}", meta.stripe_size);
+                    println!("payload_hash:      {}", meta.payload_hash);
+                    let intact = meta.stripes.iter().filter(|s| s.valid).count();
+                    println!("intact_stripes:    {}/{}", intact, meta.stripes.len());
+                }
 
-            if container.starts_with(b"SVLT") || armor_meta.is_none() {
-                let info = crypto::inspect(&container)?;
-                println!("container_version: {}", info.version);
-                println!("dpapi_bound:       {}", info.dpapi_bound);
-                println!("payload_bytes:     {}", info.payload_size);
-                println!("salt_hex:          {}", info.salt_hex);
-                if info.decoy_container {
-                    println!("decoy_container:   true");
-                    println!("container_type:    decoy (plausible deniability)");
+                if container.starts_with(b"SVLT") || armor_meta.is_none() {
+                    let info = crypto::inspect(&container)?;
+                    println!("container_version: {}", info.version);
+                    println!("dpapi_bound:       {}", info.dpapi_bound);
+                    println!("payload_bytes:     {}", info.payload_size);
+                    println!("salt_hex:          {}", info.salt_hex);
+                    if info.decoy_container {
+                        println!("decoy_container:   true");
+                        println!("container_type:    decoy (plausible deniability)");
+                    }
+                    if let Some(ref pol) = info.policy {
+                        let now = policy::current_utc_timestamp();
+                        println!("policy_header:     present");
+                        println!("policy_status:     {}", pol.status_summary(now));
+                        println!(
+                            "policy_created_at: {} ({})",
+                            pol.created_at,
+                            pol.format_created_at()
+                        );
+                        if let Some(nb) = pol.not_before {
+                            println!(
+                                "policy_not_before: {} ({})",
+                                nb,
+                                policy::format_iso8601_utc(nb)
+                            );
+                        }
+                        if let Some(exp) = pol.expires_at {
+                            println!(
+                                "policy_expires_at: {} ({})",
+                                exp,
+                                policy::format_iso8601_utc(exp)
+                            );
+                        }
+                        if let Some(ref desc) = pol.description {
+                            println!("policy_desc:       {}", desc);
+                        }
+                    }
                 }
             }
         }
@@ -1070,6 +1246,10 @@ fn main() -> Result<()> {
             armor,
             carrier,
             list,
+            not_before,
+            expires_at,
+            expires_in,
+            policy_desc,
             json,
         } => {
             handle_pack_dir_command(
@@ -1080,6 +1260,10 @@ fn main() -> Result<()> {
                 armor,
                 carrier.as_deref(),
                 list,
+                not_before.as_deref(),
+                expires_at.as_deref(),
+                expires_in.as_deref(),
+                policy_desc.as_deref(),
                 json,
             )?;
             passphrase.zeroize();
@@ -1091,6 +1275,7 @@ fn main() -> Result<()> {
             list,
             verify_only,
             overwrite,
+            at_time,
             json,
         } => {
             handle_unpack_dir_command(
@@ -1100,6 +1285,7 @@ fn main() -> Result<()> {
                 list,
                 verify_only,
                 overwrite,
+                at_time.as_deref(),
                 json,
             )?;
             if let Some(ref mut p) = passphrase {
@@ -1701,6 +1887,10 @@ fn handle_pack_dir_command(
     armor: bool,
     carrier: Option<&Path>,
     list: bool,
+    not_before: Option<&str>,
+    expires_at: Option<&str>,
+    expires_in: Option<&str>,
+    policy_desc: Option<&str>,
     json: bool,
 ) -> Result<()> {
     if passphrase.is_empty() {
@@ -1709,6 +1899,7 @@ fn handle_pack_dir_command(
 
     let archive_bytes = archive::pack_directory(input)?;
     let summary = archive::list_archive(&archive_bytes)?;
+    let policy = parse_cli_policy(not_before, expires_at, expires_in, policy_desc)?;
 
     if list && !json {
         println!(
@@ -1732,7 +1923,7 @@ fn handle_pack_dir_command(
         }
     }
 
-    let sealed = crypto::seal(&archive_bytes, passphrase, dpapi)?;
+    let sealed = crypto::seal_with_policy(&archive_bytes, passphrase, dpapi, policy.as_ref())?;
 
     if let Some(carrier_path) = carrier {
         let carrier_bytes = fs::read(carrier_path)
@@ -1787,6 +1978,7 @@ fn handle_pack_dir_command(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_unpack_dir_command(
     input: &Path,
     output: Option<&Path>,
@@ -1794,6 +1986,7 @@ fn handle_unpack_dir_command(
     list: bool,
     verify_only: bool,
     overwrite: bool,
+    at_time: Option<&str>,
     json: bool,
 ) -> Result<()> {
     let pass = passphrase.ok_or_else(|| anyhow::anyhow!("--passphrase is required"))?;
@@ -1819,7 +2012,8 @@ fn handle_unpack_dir_command(
         raw_bytes
     };
 
-    let plain = crypto::open(&container, pass)?;
+    let at_time_val = parse_cli_at_time(at_time)?;
+    let plain = crypto::open_at(&container, pass, at_time_val)?;
 
     if list {
         let summary = archive::list_archive(&plain)?;

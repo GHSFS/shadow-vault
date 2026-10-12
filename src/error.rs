@@ -25,4 +25,7 @@ pub enum Error {
 
     #[error("archive error: {0}")]
     Archive(String),
+
+    #[error("policy violation: {0}")]
+    Policy(String),
 }

@@ -51,6 +51,7 @@ fn audit_embedded_container(
     let flags = slice[5];
     let dpapi = (flags & crate::crypto::FLAG_DPAPI) != 0;
     let decoy = (flags & crate::crypto::FLAG_DECOY) != 0;
+    let has_policy = (flags & crate::crypto::FLAG_POLICY) != 0;
     let salt = &slice[6..22];
     let salt_hex = salt.iter().map(|b| format!("{b:02x}")).collect::<String>();
     let salt_entropy = shannon_entropy(salt);
@@ -60,7 +61,9 @@ fn audit_embedded_container(
             "Embedded container in {context} has unsupported version v{version} (supported versions: v1, v2)"
         ));
     }
-    if (flags & !0x03) != 0 {
+    let valid_flags =
+        crate::crypto::FLAG_DPAPI | crate::crypto::FLAG_DECOY | crate::crypto::FLAG_POLICY;
+    if (flags & !valid_flags) != 0 {
         anomalies.push(format!(
             "Embedded container in {context} has unknown flag bits: {flags:#04x}"
         ));
@@ -82,7 +85,64 @@ fn audit_embedded_container(
         }
     }
 
-    let ciphertext = &slice[crate::crypto::HEADER_LEN..];
+    let body_offset = if has_policy {
+        if slice.len() < crate::crypto::HEADER_LEN + 4 {
+            anomalies.push(format!(
+                "Embedded container in {context} has truncated policy header length"
+            ));
+            crate::crypto::HEADER_LEN
+        } else {
+            let policy_len = u32::from_le_bytes(
+                slice[crate::crypto::HEADER_LEN..crate::crypto::HEADER_LEN + 4]
+                    .try_into()
+                    .unwrap_or([0; 4]),
+            ) as usize;
+            let policy_start = crate::crypto::HEADER_LEN + 4;
+            let policy_end = policy_start + policy_len;
+            if slice.len() < policy_end + 16 {
+                anomalies.push(format!(
+                    "Embedded container in {context} is truncated within policy header"
+                ));
+                crate::crypto::HEADER_LEN
+            } else {
+                match crate::policy::PolicyHeader::from_bytes(&slice[policy_start..policy_end]) {
+                    Ok(pol) => {
+                        let now = crate::policy::current_utc_timestamp();
+                        findings.push(format!(
+                            "Embedded container policy: {}",
+                            pol.status_summary(now)
+                        ));
+                        if let Some(nb) = pol.not_before {
+                            findings.push(format!(
+                                "Embedded container policy not_before: {}",
+                                crate::policy::format_iso8601_utc(nb)
+                            ));
+                        }
+                        if let Some(exp) = pol.expires_at {
+                            findings.push(format!(
+                                "Embedded container policy expires_at: {}",
+                                crate::policy::format_iso8601_utc(exp)
+                            ));
+                        }
+                        if let Some(ref desc) = pol.description {
+                            findings.push(format!("Embedded container policy description: {desc}"));
+                        }
+                        policy_end
+                    }
+                    Err(e) => {
+                        anomalies.push(format!(
+                            "Embedded container in {context} policy header corrupted: {e}"
+                        ));
+                        crate::crypto::HEADER_LEN
+                    }
+                }
+            }
+        }
+    } else {
+        crate::crypto::HEADER_LEN
+    };
+
+    let ciphertext = &slice[body_offset..];
     let cipher_entropy = shannon_entropy(ciphertext);
     findings.push(format!(
         "Embedded container in {context} ciphertext Shannon entropy: {cipher_entropy:.4} bits/byte"

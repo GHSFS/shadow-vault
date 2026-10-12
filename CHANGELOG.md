@@ -5,6 +5,46 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-10-12
+
+### Added
+- RFC 6238 TOTP (Time-based One-Time Password) & RFC 4226 HOTP 2FA Vault Engine (`src/totp.rs`).
+- Zero-dependency Base32 codec (`base32_decode`, `base32_encode`) conforming to RFC 4648 with case-insensitivity, whitespace/hyphen tolerance, and `Zeroizing<Vec<u8>>` secret buffer clearing.
+- Self-contained RFC 3174 SHA-1 implementation operating on 32-bit state without external dependencies.
+- RFC 2104 HMAC implementation supporting `SHA1`, `SHA256`, and `SHA512` with block-level padding and internal zeroization.
+- RFC 4226 dynamic truncation producing 6-to-8 digit OTP tokens, verified against RFC 4226 Appendix D vectors.
+- RFC 6238 time-step calculation with configurable periods (default: 30s), verified against all RFC 6238 Appendix B test vectors across SHA-1, SHA-256, and SHA-512.
+- Timing-attack-resistant constant-time code comparison (`constant_time_eq`) with configurable window skew tolerance ($\pm S$).
+- Live terminal visual countdown progress bar (`render_progress_bar`, e.g., `[████████░░] 19s remaining`).
+- Key URI format (`otpauth://totp/...`) parser and canonical serializer for seamless interoperability with Google Authenticator, Bitwarden, and 1Password.
+- Encrypted `TotpVault` container sealed inside `.svault` files using Argon2id + ChaCha20-Poly1305 AEAD and optional Windows DPAPI hardware binding.
+- CLI subcommands:
+  - `svault totp add`: Add new 2FA credentials via `--secret` or `--uri`.
+  - `svault totp code`: Generate current live 2FA code with visual countdown bar or `--json`.
+  - `svault totp list`: List stored accounts with issuer, algorithm, and period metadata.
+  - `svault totp remove`: Securely delete an account from the encrypted vault.
+  - `svault totp verify`: Verify an OTP code against skew tolerance windows.
+  - `svault totp import`: Batch import accounts from key URIs or export files.
+  - `svault totp export`: Export stored accounts as standard `otpauth://` URIs.
+- Machine-readable `--json` output across `code`, `list`, `verify`, and `export` actions.
+- Comprehensive test coverage: 124 unit tests and 51 integration tests (175 total tests, 100% pass).
+
+## [0.5.0] - 2026-10-12
+
+### Added
+- Passphrase Strength & Steganography Carrier Entropy Auditor (`src/audit.rs`) with subcommands `svault audit <target>` and `svault audit -p <passphrase>`.
+- Shannon entropy calculator ($H = -\sum p_i \log_2 p_i$ bits/byte) and Chi-square ($\chi^2$, $df=255$) goodness-of-fit uniformity analysis across plaintext, ciphertext, and media files.
+- Passphrase resilience scoring ($0..=4$), character pool diversity analysis, and effective entropy estimation with pattern penalties.
+- Predictive vulnerability pattern detectors: consecutive character repetitions, ascending/descending alphanumeric sequences, common keyboard walks (QWERTY layout), and leetspeak-deobfuscated dictionary matching against common weak passwords.
+- Multi-threat brute force crack time estimation across online rate-limited (100/s), offline Argon2id ($10^3$/s), and offline GPU hash cluster ($10^{10}$/s) attack vectors.
+- Steganography carrier anomaly audit:
+  - PNG image chunk validation, private `svLt` chunk detection and CRC-32 verification, and post-IEND trailing byte detection (EOF injection detection).
+  - WAV audio RIFF subchunk analysis and 16-bit PCM sample LSB steganography stream detection with magic header validation.
+  - `SVLT` container header integrity, salt entropy validation, and ciphertext Shannon entropy verification.
+- Structured machine-readable JSON output mode (`svault audit --json`) for automated scripting and CI/CD security pipelines.
+- Proactive memory zeroization (`zeroize`) wiping intermediate passphrase buffers and leetspeak deobfuscation buffers from memory upon scope exit.
+- Comprehensive unit and integration tests (101 unit + 39 integration, 140 total tests) validating passphrase audits, carrier steganalysis, JSON schema, and CLI roundtrips.
+
 ## [0.4.0] - 2026-10-12
 
 ### Added

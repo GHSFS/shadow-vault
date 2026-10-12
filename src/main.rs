@@ -2,6 +2,7 @@
 // http://www.apache.org/licenses/LICENSE-2.0>.
 // Copyright 2026 GHSFS. See the NOTICE file for attribution details.
 
+mod audit;
 mod cli;
 mod crypto;
 mod decoy;
@@ -9,14 +10,16 @@ mod error;
 mod shamir;
 mod shred;
 mod stego;
+mod totp;
 mod wav;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, Commands};
+use cli::{Cli, Commands, TotpAction};
 use colored::Colorize;
 use std::fs;
 use std::io::{Read, Write};
+use zeroize::Zeroize;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -445,7 +448,597 @@ fn main() -> Result<()> {
                     .context("failed to write binary secret to stdout")?;
             }
         }
+        Commands::Audit {
+            target,
+            mut passphrase,
+            json,
+        } => {
+            let mut pass_report = None;
+            let mut carrier_report = None;
+
+            if let Some(target_path) = target {
+                if target_path.to_str() == Some("-") {
+                    let mut stdin_bytes = zeroize::Zeroizing::new(Vec::new());
+                    std::io::stdin()
+                        .read_to_end(&mut stdin_bytes)
+                        .context("failed to read carrier data from stdin for audit")?;
+                    if stdin_bytes.is_empty() {
+                        anyhow::bail!("piped stdin for target '-' contains 0 bytes");
+                    }
+                    carrier_report = Some(audit::audit_carrier_bytes("<stdin>", &stdin_bytes)?);
+                } else {
+                    carrier_report = Some(audit::audit_file(&target_path)?);
+                }
+                if let Some(ref p) = passphrase {
+                    pass_report = Some(audit::audit_passphrase(p));
+                }
+            } else if let Some(ref p) = passphrase {
+                pass_report = Some(audit::audit_passphrase(p));
+            } else {
+                use std::io::IsTerminal;
+                if std::io::stdin().is_terminal() {
+                    anyhow::bail!(
+                        "either TARGET file, --passphrase, or piped input must be provided for audit"
+                    );
+                }
+                let mut raw_bytes = zeroize::Zeroizing::new(Vec::new());
+                std::io::stdin()
+                    .read_to_end(&mut raw_bytes)
+                    .context("failed to read input from stdin for audit")?;
+                if raw_bytes.is_empty() {
+                    anyhow::bail!(
+                        "either TARGET file, --passphrase, or piped input must be provided for audit"
+                    );
+                }
+
+                // Discriminate between binary/container carriers and plaintext passphrases
+                let is_known_carrier = raw_bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+                    || (raw_bytes.len() >= 12
+                        && &raw_bytes[0..4] == b"RIFF"
+                        && &raw_bytes[8..12] == b"WAVE")
+                    || raw_bytes.starts_with(b"SVLT");
+
+                if is_known_carrier
+                    || raw_bytes.contains(&0)
+                    || std::str::from_utf8(&raw_bytes).is_err()
+                {
+                    carrier_report = Some(audit::audit_carrier_bytes("<stdin>", &raw_bytes)?);
+                } else {
+                    let text = std::str::from_utf8(&raw_bytes).unwrap();
+                    let trimmed = text.trim();
+                    if trimmed.is_empty() {
+                        anyhow::bail!(
+                            "either TARGET file, --passphrase, or piped input must be provided for audit"
+                        );
+                    }
+                    if trimmed.lines().count() <= 1 && trimmed.len() <= 256 {
+                        pass_report = Some(audit::audit_passphrase(trimmed));
+                    } else {
+                        carrier_report = Some(audit::audit_carrier_bytes("<stdin>", &raw_bytes)?);
+                    }
+                }
+            }
+
+            // Proactively wipe passphrase string from memory
+            if let Some(ref mut p) = passphrase {
+                zeroize::Zeroize::zeroize(p);
+            }
+
+            if json {
+                let combined = audit::CombinedAuditReport {
+                    passphrase: pass_report,
+                    carrier: carrier_report,
+                };
+                println!("{}", serde_json::to_string_pretty(&combined)?);
+            } else {
+                if let Some(ref rep) = pass_report {
+                    print_passphrase_audit(rep);
+                }
+                if let Some(ref rep) = carrier_report {
+                    if pass_report.is_some() {
+                        println!();
+                    }
+                    print_carrier_audit(rep);
+                }
+            }
+        }
+        Commands::Totp { action } => {
+            handle_totp_command(action)?;
+        }
     }
 
     Ok(())
+}
+
+fn handle_totp_command(action: TotpAction) -> Result<()> {
+    match action {
+        TotpAction::Add {
+            name,
+            secret,
+            uri,
+            issuer,
+            algorithm,
+            digits,
+            period,
+            vault,
+            mut passphrase,
+            dpapi,
+        } => {
+            let record = if let Some(ref uri_str) = uri {
+                let parsed = totp::OtpAuthUri::parse(uri_str)?;
+                let rec_name = name.unwrap_or(parsed.account);
+                let rec_issuer = issuer.or(parsed.issuer);
+                let rec_secret = parsed.secret;
+                let rec_algo = if algorithm != "SHA1" {
+                    totp::HashAlgorithm::from_str_loose(&algorithm)?
+                } else {
+                    parsed.algorithm
+                };
+                let rec_digits = if digits != 6 { digits } else { parsed.digits };
+                let rec_period = if period != 30 { period } else { parsed.period };
+                totp::TotpRecord::new(
+                    rec_name, rec_issuer, rec_secret, rec_algo, rec_digits, rec_period,
+                )?
+            } else if let Some(sec) = secret {
+                let rec_name = name.ok_or_else(|| {
+                    anyhow::anyhow!("account name is required when specifying --secret")
+                })?;
+                let rec_algo = totp::HashAlgorithm::from_str_loose(&algorithm)?;
+                totp::TotpRecord::new(rec_name, issuer, sec, rec_algo, digits, period)?
+            } else {
+                anyhow::bail!("either --secret or --uri must be provided");
+            };
+
+            let mut vault_inst = totp::TotpVault::load_or_new(&vault, &passphrase)?;
+            let bind_dpapi = dpapi || vault_inst.dpapi_bound;
+            let record_name = record.name.clone();
+            let record_algo = record.algorithm;
+            let record_digits = record.digits;
+            let record_period = record.period;
+
+            vault_inst.add_record(record)?;
+            vault_inst.save(&vault, &passphrase, bind_dpapi)?;
+            passphrase.zeroize();
+
+            println!(
+                "{} added TOTP 2FA record '{}' to {} (algo={}, digits={}, period={}s, dpapi={})",
+                "ok".green().bold(),
+                record_name,
+                vault.display(),
+                record_algo,
+                record_digits,
+                record_period,
+                bind_dpapi
+            );
+        }
+
+        TotpAction::Code {
+            name,
+            time,
+            vault,
+            mut passphrase,
+            json,
+        } => {
+            let vault_inst = totp::TotpVault::load(&vault, &passphrase)?;
+            passphrase.zeroize();
+
+            let record = vault_inst.get_record(&name).ok_or_else(|| {
+                anyhow::anyhow!("record '{}' not found in vault {}", name, vault.display())
+            })?;
+
+            let timestamp = time.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            });
+
+            let (code, remaining) = vault_inst.generate_code(&name, timestamp)?;
+
+            if json {
+                let out = serde_json::json!({
+                    "name": record.name,
+                    "issuer": record.issuer,
+                    "code": code,
+                    "remaining_seconds": remaining,
+                    "period": record.period,
+                    "algorithm": record.algorithm.as_str(),
+                    "digits": record.digits,
+                    "timestamp": timestamp,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                let bar = totp::render_progress_bar(remaining, record.period, 10);
+                let issuer_str = record
+                    .issuer
+                    .as_deref()
+                    .map(|i| format!("{i} "))
+                    .unwrap_or_default();
+                println!(
+                    "{} TOTP Code for {}{}: {} {} {}",
+                    "ok".green().bold(),
+                    issuer_str.bold(),
+                    format!("({})", record.name).dimmed(),
+                    code.cyan().bold(),
+                    bar.yellow(),
+                    format!("({}s remaining)", remaining).green()
+                );
+            }
+        }
+
+        TotpAction::List {
+            vault,
+            mut passphrase,
+            json,
+        } => {
+            let vault_inst = totp::TotpVault::load(&vault, &passphrase)?;
+            passphrase.zeroize();
+            let records = vault_inst.list_records();
+
+            if json {
+                let summaries: Vec<_> = records
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "name": r.name,
+                            "issuer": r.issuer,
+                            "algorithm": r.algorithm.as_str(),
+                            "digits": r.digits,
+                            "period": r.period,
+                            "created_at": r.created_at,
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&summaries)?);
+            } else {
+                println!(
+                    "{} TOTP 2FA Vault: {} ({} records, dpapi={})",
+                    "=== [TOTP VAULT] ===".bold(),
+                    vault.display(),
+                    records.len(),
+                    vault_inst.dpapi_bound
+                );
+                if records.is_empty() {
+                    println!("  (no records stored)");
+                } else {
+                    println!(
+                        "  {:<20} {:<15} {:<8} {:<8} {:<8}",
+                        "ACCOUNT", "ISSUER", "ALGO", "DIGITS", "PERIOD"
+                    );
+                    println!("  {}", "-".repeat(65));
+                    for r in records {
+                        let iss = r.issuer.as_deref().unwrap_or("-");
+                        println!(
+                            "  {:<20} {:<15} {:<8} {:<8} {:<8}s",
+                            r.name,
+                            iss,
+                            r.algorithm.as_str(),
+                            r.digits,
+                            r.period
+                        );
+                    }
+                }
+            }
+        }
+
+        TotpAction::Remove {
+            name,
+            vault,
+            mut passphrase,
+            dpapi,
+        } => {
+            let mut vault_inst = totp::TotpVault::load(&vault, &passphrase)?;
+            let removed = vault_inst.remove_record(&name)?;
+            let bind_dpapi = dpapi || vault_inst.dpapi_bound;
+            vault_inst.save(&vault, &passphrase, bind_dpapi)?;
+            passphrase.zeroize();
+
+            println!(
+                "{} removed TOTP record '{}' from {}",
+                "ok".green().bold(),
+                removed.name,
+                vault.display()
+            );
+        }
+
+        TotpAction::Verify {
+            name,
+            code,
+            skew,
+            time,
+            vault,
+            mut passphrase,
+            json,
+        } => {
+            let vault_inst = totp::TotpVault::load(&vault, &passphrase)?;
+            passphrase.zeroize();
+            let record = vault_inst.get_record(&name).ok_or_else(|| {
+                anyhow::anyhow!("record '{}' not found in vault {}", name, vault.display())
+            })?;
+
+            let timestamp = time.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            });
+
+            let is_valid = vault_inst.verify_code(&name, &code, timestamp, skew)?;
+
+            if json {
+                let out = serde_json::json!({
+                    "name": record.name,
+                    "issuer": record.issuer,
+                    "code": code,
+                    "valid": is_valid,
+                    "timestamp": timestamp,
+                    "skew": skew,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+                if !is_valid {
+                    anyhow::bail!("TOTP verification failed: invalid code");
+                }
+            } else if is_valid {
+                println!(
+                    "{} TOTP code '{}' is VALID for '{}' (skew=\u{b1}{})",
+                    "ok".green().bold(),
+                    code,
+                    record.name,
+                    skew
+                );
+            } else {
+                anyhow::bail!(
+                    "TOTP verification failed: code '{}' is invalid for '{}'",
+                    code,
+                    record.name
+                );
+            }
+        }
+
+        TotpAction::Import {
+            uri,
+            file,
+            vault,
+            mut passphrase,
+            dpapi,
+        } => {
+            let mut vault_inst = totp::TotpVault::load_or_new(&vault, &passphrase)?;
+            let mut imported = 0usize;
+
+            if let Some(ref uri_str) = uri {
+                let parsed = totp::OtpAuthUri::parse(uri_str)?;
+                let rec = totp::TotpRecord::new(
+                    parsed.account,
+                    parsed.issuer,
+                    parsed.secret,
+                    parsed.algorithm,
+                    parsed.digits,
+                    parsed.period,
+                )?;
+                vault_inst.add_record(rec)?;
+                imported += 1;
+            }
+
+            if let Some(ref file_path) = file {
+                let content = fs::read_to_string(file_path).with_context(|| {
+                    format!("failed to read import file: {}", file_path.display())
+                })?;
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() || trimmed.starts_with('#') {
+                        continue;
+                    }
+                    if trimmed.starts_with("otpauth://") {
+                        let parsed = totp::OtpAuthUri::parse(trimmed)?;
+                        let rec = totp::TotpRecord::new(
+                            parsed.account,
+                            parsed.issuer,
+                            parsed.secret,
+                            parsed.algorithm,
+                            parsed.digits,
+                            parsed.period,
+                        )?;
+                        vault_inst.add_record(rec)?;
+                        imported += 1;
+                    }
+                }
+            }
+
+            if imported == 0 {
+                anyhow::bail!("no valid OTP records found to import (provide --uri or --file)");
+            }
+
+            let bind_dpapi = dpapi || vault_inst.dpapi_bound;
+            vault_inst.save(&vault, &passphrase, bind_dpapi)?;
+            passphrase.zeroize();
+
+            println!(
+                "{} imported {} record(s) into {}",
+                "ok".green().bold(),
+                imported,
+                vault.display()
+            );
+        }
+
+        TotpAction::Export {
+            name,
+            vault,
+            mut passphrase,
+            json,
+        } => {
+            let vault_inst = totp::TotpVault::load(&vault, &passphrase)?;
+            passphrase.zeroize();
+
+            if let Some(ref n) = name {
+                let record = vault_inst.get_record(n).ok_or_else(|| {
+                    anyhow::anyhow!("record '{}' not found in vault {}", n, vault.display())
+                })?;
+                let uri = record.to_uri();
+                if json {
+                    let out = serde_json::json!({
+                        "name": record.name,
+                        "issuer": record.issuer,
+                        "uri": uri,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!("{}", uri);
+                }
+            } else if json {
+                let out: Vec<_> = vault_inst
+                    .list_records()
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "name": r.name,
+                            "issuer": r.issuer,
+                            "uri": r.to_uri(),
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                for r in vault_inst.list_records() {
+                    println!("{}", r.to_uri());
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn print_passphrase_audit(rep: &audit::PassphraseAuditReport) {
+    let strength_badge = match rep.strength {
+        audit::StrengthLevel::VeryWeak => format!("[{}]", rep.strength).red().bold(),
+        audit::StrengthLevel::Weak => format!("[{}]", rep.strength).yellow().bold(),
+        audit::StrengthLevel::Moderate => format!("[{}]", rep.strength).cyan().bold(),
+        audit::StrengthLevel::Strong => format!("[{}]", rep.strength).green().bold(),
+        audit::StrengthLevel::VeryStrong => format!("[{}]", rep.strength).bright_green().bold(),
+    };
+
+    println!(
+        "{} Passphrase Strength & Entropy Audit",
+        "=== [AUDIT] ===".bold()
+    );
+    println!(
+        "  Strength Rating:       {} (Score: {}/4)",
+        strength_badge, rep.score
+    );
+    println!(
+        "  Length:                {} characters ({} UTF-8 bytes)",
+        rep.length_chars, rep.length_bytes
+    );
+    println!("  Character Pool Size:   {} possibilities", rep.pool_size);
+    println!(
+        "  Shannon Entropy:       {:.2} bits/byte (total: {:.1} bits)",
+        rep.shannon_entropy_per_byte, rep.total_shannon_entropy_bits
+    );
+    println!("  Theoretical Pool Bits: {:.1} bits", rep.pool_entropy_bits);
+    println!(
+        "  Effective Entropy:     {:.1} bits",
+        rep.effective_entropy_bits
+    );
+    println!("  Time to Crack Estimates:");
+    println!(
+        "    - Online (100 guess/s):      {}",
+        rep.crack_time_online.cyan()
+    );
+    println!(
+        "    - Offline Argon2id (1k/s):    {}",
+        rep.crack_time_offline_argon2.cyan()
+    );
+    println!(
+        "    - Offline GPU Hash (10B/s):   {}",
+        rep.crack_time_offline_fast.cyan()
+    );
+
+    if !rep.findings.is_empty() {
+        println!("  Findings & Anomalies:");
+        for f in &rep.findings {
+            println!("    - {}", f.yellow());
+        }
+    }
+
+    if !rep.suggestions.is_empty() {
+        println!("  Recommendations:");
+        for s in &rep.suggestions {
+            println!("    - {}", s.bright_blue());
+        }
+    }
+}
+
+fn print_carrier_audit(rep: &audit::FileAuditReport) {
+    let verdict_badge = match rep.verdict {
+        audit::CarrierVerdict::CleanCarrier => format!("[{}]", rep.verdict).green().bold(),
+        audit::CarrierVerdict::StegoCarrierDetected => {
+            format!("[{}]", rep.verdict).bright_yellow().bold()
+        }
+        audit::CarrierVerdict::SuspiciousAnomaly => format!("[{}]", rep.verdict).red().bold(),
+        audit::CarrierVerdict::EncryptedContainer => {
+            format!("[{}]", rep.verdict).bright_cyan().bold()
+        }
+        audit::CarrierVerdict::PlaintextFile => format!("[{}]", rep.verdict).yellow().bold(),
+        audit::CarrierVerdict::BinaryData => format!("[{}]", rep.verdict).white().bold(),
+    };
+
+    println!(
+        "{} Carrier Steganalysis & Integrity Audit",
+        "=== [AUDIT] ===".bold()
+    );
+    println!("  Target Path:           {}", rep.file_path);
+    println!("  File Size:             {} bytes", rep.file_size);
+    println!("  Carrier Type:          {}", rep.carrier_type);
+    println!(
+        "  Shannon Entropy:       {:.4} bits/byte (max: 8.0)",
+        rep.shannon_entropy
+    );
+    println!("  Chi-Square (df=255):   {:.2}", rep.chi_square);
+    println!("  Steganalysis Verdict:  {}", verdict_badge);
+
+    if let Some(v) = rep.details.container_version {
+        println!("  Container Version:     v{}", v);
+    }
+    if let Some(dpapi) = rep.details.dpapi_bound {
+        println!("  DPAPI Bound:           {}", dpapi);
+    }
+    if let Some(decoy) = rep.details.decoy_container {
+        println!("  Decoy Container:       {}", decoy);
+    }
+    if let Some(bytes) = rep.details.payload_bytes {
+        println!("  Payload Size:          {} bytes", bytes);
+    }
+    if rep.details.stego_chunk_present {
+        println!("  Stego Chunk ('svLt'):  present (active)");
+    }
+    if rep.details.stego_lsb_present {
+        println!("  Stego PCM LSB:         present (active)");
+    }
+    if rep.details.trailing_bytes > 0 {
+        println!(
+            "  Trailing Bytes:        {} bytes (post-EOF anomaly)",
+            rep.details.trailing_bytes
+        );
+    }
+
+    if !rep.findings.is_empty() {
+        println!("  Findings:");
+        for f in &rep.findings {
+            println!("    - {}", f);
+        }
+    }
+
+    if !rep.anomalies.is_empty() {
+        println!("  Anomalies Detected:");
+        for a in &rep.anomalies {
+            println!("    - {}", a.red().bold());
+        }
+    }
+
+    if !rep.recommendations.is_empty() {
+        println!("  Recommendations:");
+        for r in &rep.recommendations {
+            println!("    - {}", r.bright_blue());
+        }
+    }
 }

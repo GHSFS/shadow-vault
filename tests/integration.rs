@@ -14,14 +14,14 @@ fn cli_version_and_help_work() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.4.0"));
+        .stdout(predicate::str::contains("svault 0.6.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
         .arg("-V")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.4.0"));
+        .stdout(predicate::str::contains("svault 0.6.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
@@ -40,6 +40,8 @@ fn cli_version_and_help_work() {
         .stdout(predicate::str::contains("split"))
         .stdout(predicate::str::contains("combine"))
         .stdout(predicate::str::contains("inspect"))
+        .stdout(predicate::str::contains("audit"))
+        .stdout(predicate::str::contains("totp"))
         .stdout(predicate::str::contains("shred"));
 
     Command::cargo_bin("svault")
@@ -48,6 +50,36 @@ fn cli_version_and_help_work() {
         .assert()
         .success()
         .stdout(predicate::str::contains("ShadowVault"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["totp", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("totp"))
+        .stdout(predicate::str::contains("add"))
+        .stdout(predicate::str::contains("code"))
+        .stdout(predicate::str::contains("list"))
+        .stdout(predicate::str::contains("remove"))
+        .stdout(predicate::str::contains("verify"))
+        .stdout(predicate::str::contains("import"))
+        .stdout(predicate::str::contains("export"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("audit"))
+        .stdout(predicate::str::contains("--passphrase"))
+        .stdout(predicate::str::contains("--json"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", "-h"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("audit"));
 
     Command::cargo_bin("svault")
         .unwrap()
@@ -1608,4 +1640,1205 @@ fn cli_split_svault_container_and_reconstruct_decrypt() {
 
     let restored_bytes = fs::read(&restored).unwrap();
     assert_eq!(restored_bytes, payload);
+}
+
+#[test]
+fn cli_audit_passphrase_direct_text_and_json() {
+    // 1. Weak passphrase test
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", "-p", "P@ssw0rd123"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Passphrase Strength & Entropy Audit",
+        ))
+        .stdout(predicate::str::contains("VERY WEAK"))
+        .stdout(predicate::str::contains("Findings & Anomalies:"));
+
+    // 2. Strong passphrase in JSON format
+    let assert_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", "-p", "Kx9#mQ2$vL8!zW5&pT4@", "--json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["passphrase"]["score"], 4);
+    assert_eq!(json["passphrase"]["strength"], "very_strong");
+    assert!(
+        json["passphrase"]["effective_entropy_bits"]
+            .as_f64()
+            .unwrap()
+            > 80.0
+    );
+}
+
+#[test]
+fn cli_audit_container_roundtrip() {
+    let dir = tempdir().unwrap();
+    let src_path = dir.path().join("secret.txt");
+    let vault_path = dir.path().join("secret.svault");
+
+    let payload = b"sensitive classified research notes";
+    fs::write(&src_path, payload).unwrap();
+
+    // Encrypt
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "encrypt",
+            "-i",
+            src_path.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "super-safe-audit-pass-1234",
+        ])
+        .assert()
+        .success();
+
+    // Audit terminal text output
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", vault_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Carrier Steganalysis & Integrity Audit",
+        ))
+        .stdout(predicate::str::contains("ENCRYPTED CONTAINER"))
+        .stdout(predicate::str::contains("Container Version:     v1"))
+        .stdout(predicate::str::contains("Ciphertext Shannon entropy"));
+
+    // Audit JSON output
+    let assert_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", vault_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["carrier"]["verdict"], "encrypted_container");
+    assert_eq!(json["carrier"]["details"]["container_version"], 1);
+    assert_eq!(json["carrier"]["details"]["dpapi_bound"], false);
+    assert!(json["carrier"]["shannon_entropy"].as_f64().unwrap() > 0.0);
+}
+
+#[test]
+fn cli_audit_png_stego_carrier() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("carrier.png");
+    let secret_path = dir.path().join("secret.txt");
+    let stego_path = dir.path().join("stego.png");
+
+    let raw_png = vec![
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
+        0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR len 13
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15,
+        0xc4, 0x89, // CRC
+        0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, // IDAT len 10
+        0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d,
+        0xb4, // CRC
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, // IEND len 0
+        0xae, 0x42, 0x60, 0x82, // CRC
+    ];
+    fs::write(&carrier_path, &raw_png).unwrap();
+    fs::write(&secret_path, b"audit-png-payload").unwrap();
+
+    // 1. Audit clean carrier before embedding
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", carrier_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CLEAN CARRIER"));
+
+    // 2. Embed payload
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "png-audit-passphrase-2026",
+        ])
+        .assert()
+        .success();
+
+    // 3. Audit stego carrier
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("STEGO CARRIER DETECTED"))
+        .stdout(predicate::str::contains(
+            "Stego Chunk ('svLt'):  present (active)",
+        ))
+        .stdout(predicate::str::contains("extract with 'svault extract'"));
+
+    // 4. Audit stego carrier with JSON output
+    let assert_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", stego_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["carrier"]["verdict"], "stego_carrier_detected");
+    assert_eq!(json["carrier"]["details"]["stego_chunk_present"], true);
+}
+
+#[test]
+fn cli_audit_wav_stego_carrier() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("carrier.wav");
+    let secret_path = dir.path().join("secret.txt");
+    let stego_path = dir.path().join("stego.wav");
+
+    let num_samples = 2000;
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    let riff_size = 36 + (num_samples * 2) as u32;
+    wav.extend_from_slice(&riff_size.to_le_bytes());
+    wav.extend_from_slice(b"WAVE");
+    wav.extend_from_slice(b"fmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&44100u32.to_le_bytes());
+    wav.extend_from_slice(&(44100u32 * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    let data_size = (num_samples * 2) as u32;
+    wav.extend_from_slice(&data_size.to_le_bytes());
+    for i in 0..num_samples {
+        let sample = ((i as f64 * 0.1).sin() * 8000.0) as i16;
+        wav.extend_from_slice(&sample.to_le_bytes());
+    }
+
+    fs::write(&carrier_path, &wav).unwrap();
+    fs::write(&secret_path, b"audit-wav-payload").unwrap();
+
+    // Embed in chunk mode
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-wav",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "wav-audit-passphrase-2026",
+            "--mode",
+            "chunk",
+        ])
+        .assert()
+        .success();
+
+    // Audit stego WAV
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("STEGO CARRIER DETECTED"))
+        .stdout(predicate::str::contains(
+            "extract with 'svault extract-wav'",
+        ));
+}
+
+#[test]
+fn cli_audit_decoy_container() {
+    let dir = tempdir().unwrap();
+    let primary_path = dir.path().join("primary.txt");
+    let decoy_path = dir.path().join("decoy.txt");
+    let vault_path = dir.path().join("decoy.svault");
+
+    fs::write(&primary_path, b"true confidential seed").unwrap();
+    fs::write(&decoy_path, b"grocery list").unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "encrypt-decoy",
+            "-i",
+            primary_path.to_str().unwrap(),
+            "-d",
+            decoy_path.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "primary-passphrase-2026",
+            "--decoy-passphrase",
+            "decoy-passphrase-2026",
+            "--padding",
+            "64",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", vault_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Plausible deniability dual-slot decoy container detected",
+        ))
+        .stdout(predicate::str::contains("Decoy Container:       true"));
+}
+
+#[test]
+fn cli_audit_piped_stdin() {
+    Command::cargo_bin("svault")
+        .unwrap()
+        .arg("audit")
+        .write_stdin("MySuperSecurePassphraseWithSymbols!2026")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Passphrase Strength & Entropy Audit",
+        ))
+        .stdout(predicate::str::contains("Effective Entropy:"));
+}
+
+#[test]
+fn cli_audit_combined_carrier_and_passphrase() {
+    let dir = tempdir().unwrap();
+    let src_path = dir.path().join("secret.txt");
+    let vault_path = dir.path().join("combined.svault");
+
+    fs::write(&src_path, b"test-secret-data").unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "encrypt",
+            "-i",
+            src_path.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "pass-phrase-test-1",
+        ])
+        .assert()
+        .success();
+
+    // Audit both file and passphrase together
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "audit",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "audit-candidate-password-42!",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Passphrase Strength & Entropy Audit",
+        ))
+        .stdout(predicate::str::contains(
+            "Carrier Steganalysis & Integrity Audit",
+        ));
+}
+
+#[test]
+fn cli_audit_utf8_korean_passphrase() {
+    let assert_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", "-p", "안전한보안비밀번호2026!#", "--json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["passphrase"]["length_chars"], 15);
+    assert!(
+        json["passphrase"]["effective_entropy_bits"]
+            .as_f64()
+            .unwrap()
+            > 40.0
+    );
+    assert!(json["passphrase"]["score"].as_u64().unwrap() >= 2);
+}
+
+#[test]
+fn cli_audit_wav_lsb_exact_payload_size() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("carrier.wav");
+    let secret_path = dir.path().join("secret.txt");
+    let stego_path = dir.path().join("stego_lsb.wav");
+
+    let num_samples = 3000;
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    let riff_size = 36 + (num_samples * 2) as u32;
+    wav.extend_from_slice(&riff_size.to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&44100u32.to_le_bytes());
+    wav.extend_from_slice(&(44100u32 * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    let data_size = (num_samples * 2) as u32;
+    wav.extend_from_slice(&data_size.to_le_bytes());
+    for i in 0..num_samples {
+        let sample = ((i as f64 * 0.1).sin() * 8000.0) as i16;
+        wav.extend_from_slice(&sample.to_le_bytes());
+    }
+
+    let secret_bytes = b"audit-lsb-secret!"; // 17 bytes
+    fs::write(&carrier_path, &wav).unwrap();
+    fs::write(&secret_path, secret_bytes).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-wav",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "lsb-exact-payload-pass",
+            "--lsb",
+        ])
+        .assert()
+        .success();
+
+    let assert_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", stego_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["carrier"]["verdict"], "stego_carrier_detected");
+    assert_eq!(json["carrier"]["details"]["stego_lsb_present"], true);
+    // Verified: payload length is decoded as little-endian and matches exact container size
+    let payload_bytes = json["carrier"]["details"]["payload_bytes"]
+        .as_u64()
+        .unwrap();
+    assert!(
+        payload_bytes > 0 && payload_bytes < 500,
+        "payload_bytes must be small realistic container size, got {payload_bytes}"
+    );
+}
+
+#[test]
+fn cli_audit_wav_corrupted_crc_anomaly() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("carrier.wav");
+    let secret_path = dir.path().join("secret.txt");
+    let stego_path = dir.path().join("stego_corrupt.wav");
+
+    let num_samples = 2000;
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    let riff_size = 36 + (num_samples * 2) as u32;
+    wav.extend_from_slice(&riff_size.to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&44100u32.to_le_bytes());
+    wav.extend_from_slice(&(44100u32 * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    let data_size = (num_samples * 2) as u32;
+    wav.extend_from_slice(&data_size.to_le_bytes());
+    for i in 0..num_samples {
+        let sample = ((i as f64 * 0.1).sin() * 8000.0) as i16;
+        wav.extend_from_slice(&sample.to_le_bytes());
+    }
+
+    fs::write(&carrier_path, &wav).unwrap();
+    fs::write(&secret_path, b"audit-corrupt-data").unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-wav",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "corrupt-pass",
+            "--mode",
+            "chunk",
+        ])
+        .assert()
+        .success();
+
+    // Tamper the last byte of the file (chunk CRC)
+    let mut stego_bytes = fs::read(&stego_path).unwrap();
+    let last = stego_bytes.len() - 1;
+    stego_bytes[last] ^= 0xFF;
+    fs::write(&stego_path, &stego_bytes).unwrap();
+
+    let assert_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", stego_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["carrier"]["verdict"], "suspicious_anomaly");
+}
+
+#[test]
+fn cli_audit_empty_file_and_truncated_container() {
+    let dir = tempdir().unwrap();
+    let empty_path = dir.path().join("empty.bin");
+    let trunc_path = dir.path().join("trunc.svault");
+
+    fs::write(&empty_path, b"").unwrap();
+
+    let mut trunc_data = vec![0u8; 40];
+    trunc_data[0..4].copy_from_slice(b"SVLT");
+    trunc_data[4] = 1;
+    fs::write(&trunc_path, &trunc_data).unwrap();
+
+    let assert_empty = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", empty_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success();
+    let out_empty = String::from_utf8(assert_empty.get_output().stdout.clone()).unwrap();
+    let json_empty: serde_json::Value = serde_json::from_str(&out_empty).unwrap();
+    assert_eq!(json_empty["carrier"]["verdict"], "suspicious_anomaly");
+
+    let assert_trunc = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", trunc_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success();
+    let out_trunc = String::from_utf8(assert_trunc.get_output().stdout.clone()).unwrap();
+    let json_trunc: serde_json::Value = serde_json::from_str(&out_trunc).unwrap();
+    assert_eq!(json_trunc["carrier"]["verdict"], "suspicious_anomaly");
+}
+
+#[test]
+fn cli_audit_apng_carrier() {
+    let dir = tempdir().unwrap();
+    let apng_path = dir.path().join("carrier.png");
+
+    fn make_png_chunk(chunk_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
+        let mut chunk = Vec::new();
+        chunk.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        chunk.extend_from_slice(chunk_type);
+        chunk.extend_from_slice(data);
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(chunk_type);
+        hasher.update(data);
+        chunk.extend_from_slice(&hasher.finalize().to_be_bytes());
+        chunk
+    }
+
+    let mut apng = Vec::new();
+    apng.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+    let ihdr_data = [0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0];
+    apng.extend_from_slice(&make_png_chunk(b"IHDR", &ihdr_data));
+    let actl_data = [0, 0, 0, 2, 0, 0, 0, 0];
+    apng.extend_from_slice(&make_png_chunk(b"acTL", &actl_data));
+    let fctl_data = [0u8; 26];
+    apng.extend_from_slice(&make_png_chunk(b"fcTL", &fctl_data));
+    let idat_data = [0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01];
+    apng.extend_from_slice(&make_png_chunk(b"IDAT", &idat_data));
+    apng.extend_from_slice(&make_png_chunk(b"IEND", &[]));
+
+    fs::write(&apng_path, &apng).unwrap();
+
+    let assert_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", apng_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["carrier"]["verdict"], "clean_carrier");
+    let findings = json["carrier"]["findings"].as_array().unwrap();
+    assert!(findings
+        .iter()
+        .any(|f| f.as_str().unwrap().contains("APNG")));
+}
+
+#[test]
+fn cli_audit_wav_non_standard_sample_rate() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("hires_192k.wav");
+    let secret_path = dir.path().join("secret.txt");
+    let stego_path = dir.path().join("hires_stego.wav");
+
+    let num_samples = 2000;
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    let riff_size = 36 + (num_samples * 2) as u32;
+    wav.extend_from_slice(&riff_size.to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&192000u32.to_le_bytes()); // 192 kHz sample rate
+    wav.extend_from_slice(&(192000u32 * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    let data_size = (num_samples * 2) as u32;
+    wav.extend_from_slice(&data_size.to_le_bytes());
+    for i in 0..num_samples {
+        let sample = ((i as f64 * 0.1).sin() * 8000.0) as i16;
+        wav.extend_from_slice(&sample.to_le_bytes());
+    }
+
+    fs::write(&carrier_path, &wav).unwrap();
+    fs::write(&secret_path, b"audit-hires-payload").unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-wav",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "hires-pass-test",
+            "--mode",
+            "chunk",
+        ])
+        .assert()
+        .success();
+
+    let assert_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", stego_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["carrier"]["verdict"], "stego_carrier_detected");
+    assert_eq!(json["carrier"]["details"]["stego_chunk_present"], true);
+}
+
+#[test]
+fn cli_audit_passphrase_vertical_keyboard_walk() {
+    let assert_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", "-p", "qazwsxedc99!", "--json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["passphrase"]["has_keyboard_walk"], true);
+}
+
+#[test]
+fn cli_totp_add_and_generate_code_fixed_timestamp() {
+    let dir = tempdir().unwrap();
+    let vault_path = dir.path().join("totp.svault");
+    let pass = "test_totp_pass_2026!";
+
+    // 1. Add record with RFC Base32 secret for "12345678901234567890"
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "add",
+            "github",
+            "--secret",
+            "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("added TOTP 2FA record 'github'"));
+
+    // 2. Generate code at timestamp 59 (step = 1 -> RFC code 287082 for 6 digits)
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "code",
+            "github",
+            "--time",
+            "59",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("287082"))
+        .stdout(predicate::str::contains("1s remaining"))
+        .stdout(predicate::str::contains("["));
+}
+
+#[test]
+fn cli_totp_code_json_output() {
+    let dir = tempdir().unwrap();
+    let vault_path = dir.path().join("totp.svault");
+    let pass = "test_totp_json_pass!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "add",
+            "aws",
+            "--secret",
+            "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+            "--issuer",
+            "Amazon",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    let assert_cmd = Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "code",
+            "aws",
+            "--time",
+            "59",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_cmd.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["name"], "aws");
+    assert_eq!(json["issuer"], "Amazon");
+    assert_eq!(json["code"], "287082");
+    assert_eq!(json["remaining_seconds"], 1);
+    assert_eq!(json["period"], 30);
+    assert_eq!(json["digits"], 6);
+    assert_eq!(json["algorithm"], "SHA1");
+}
+
+#[test]
+fn cli_totp_add_via_uri_and_list_plain_and_json() {
+    let dir = tempdir().unwrap();
+    let vault_path = dir.path().join("totp.svault");
+    let pass = "test_totp_uri_pass!";
+
+    // Add via URI
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "add",
+            "--uri",
+            "otpauth://totp/GitHub:alice?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&algorithm=SHA1&digits=6&period=30",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alice"));
+
+    // Plain list
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "list",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("alice"))
+        .stdout(predicate::str::contains("GitHub"));
+
+    // JSON list
+    let assert_cmd = Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "list",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_cmd.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert!(json.is_array());
+    let list = json.as_array().unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0]["name"], "alice");
+    assert_eq!(list[0]["issuer"], "GitHub");
+}
+
+#[test]
+fn cli_totp_verify_with_skew() {
+    let dir = tempdir().unwrap();
+    let vault_path = dir.path().join("totp.svault");
+    let pass = "test_totp_verify_pass!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "add",
+            "test_user",
+            "--secret",
+            "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    // Verify valid code at time 59 (code 287082)
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "verify",
+            "test_user",
+            "287082",
+            "--time",
+            "59",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("VALID"));
+
+    // Verify with JSON
+    let assert_cmd = Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "verify",
+            "test_user",
+            "287082",
+            "--time",
+            "59",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+            "--json",
+        ])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_cmd.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["valid"], true);
+
+    // Verify with time skew (window + 1): at time 65, step is 2, skew 1 checks step 1, 2, 3 -> code 287082 still valid!
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "verify",
+            "test_user",
+            "287082",
+            "--time",
+            "65",
+            "--skew",
+            "1",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("VALID"));
+
+    // Outside skew: at time 150 (step 5), step difference > 1 -> invalid!
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "verify",
+            "test_user",
+            "287082",
+            "--time",
+            "150",
+            "--skew",
+            "1",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn cli_totp_remove_record() {
+    let dir = tempdir().unwrap();
+    let vault_path = dir.path().join("totp.svault");
+    let pass = "test_totp_remove_pass!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "add",
+            "removable",
+            "--secret",
+            "JBSWY3DPEHPK3PXP",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    // Remove
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "remove",
+            "removable",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("removed TOTP record 'removable'"));
+
+    // Code generation should now fail
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "code",
+            "removable",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn cli_totp_invalid_passphrase_error_handling() {
+    let dir = tempdir().unwrap();
+    let vault_path = dir.path().join("totp.svault");
+    let pass = "correct_totp_pass_99!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "add",
+            "account1",
+            "--secret",
+            "JBSWY3DPEHPK3PXP",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    // Access with wrong passphrase should fail
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "list",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "wrong_password_here",
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn cli_totp_export_and_import() {
+    let dir = tempdir().unwrap();
+    let vault1 = dir.path().join("totp1.svault");
+    let vault2 = dir.path().join("totp2.svault");
+    let pass = "test_totp_roundtrip_pass!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "add",
+            "export_test",
+            "--secret",
+            "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+            "--issuer",
+            "ExportCo",
+            "--vault",
+            vault1.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    // Export URI
+    let assert_cmd = Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "export",
+            "export_test",
+            "--vault",
+            vault1.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+
+    let uri_str = String::from_utf8(assert_cmd.get_output().stdout.clone())
+        .unwrap()
+        .trim()
+        .to_string();
+    assert!(uri_str.starts_with("otpauth://totp/"));
+
+    // Import into second vault
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "import",
+            "--uri",
+            &uri_str,
+            "--vault",
+            vault2.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("imported 1 record(s)"));
+
+    // Verify code generated from second vault matches
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "code",
+            "export_test",
+            "--time",
+            "59",
+            "--vault",
+            vault2.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("287082"));
+}
+
+#[test]
+#[cfg(windows)]
+fn cli_totp_dpapi_hardware_bound_roundtrip() {
+    let dir = tempdir().unwrap();
+    let vault_path = dir.path().join("dpapi_totp.svault");
+    let pass = "test_dpapi_totp_pass!";
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "add",
+            "hardware_acc",
+            "--secret",
+            "JBSWY3DPEHPK3PXP",
+            "--dpapi",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dpapi=true"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "totp",
+            "code",
+            "hardware_acc",
+            "--vault",
+            vault_path.to_str().unwrap(),
+            "-p",
+            pass,
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn cli_audit_stdin_target_dash() {
+    let clean_png = vec![
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // signature
+        0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR len 13
+        0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15,
+        0xc4, 0x89, // CRC
+        0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, // IDAT len 10
+        0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d,
+        0xb4, // CRC
+        0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, // IEND len 0
+        0xae, 0x42, 0x60, 0x82, // CRC
+    ];
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", "-"])
+        .write_stdin(clean_png)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Carrier Steganalysis & Integrity Audit",
+        ))
+        .stdout(predicate::str::contains("PNG Image Carrier"))
+        .stdout(predicate::str::contains("CLEAN CARRIER"));
+}
+
+#[test]
+fn cli_audit_stdin_binary_auto_detect() {
+    let dir = tempdir().unwrap();
+    let src_path = dir.path().join("piped_secret.txt");
+    let vault_path = dir.path().join("piped_vault.svault");
+
+    fs::write(&src_path, b"piped-auto-detect-secret").unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "encrypt",
+            "-i",
+            src_path.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "piped-pass-1234",
+        ])
+        .assert()
+        .success();
+
+    let vault_bytes = fs::read(&vault_path).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .arg("audit")
+        .write_stdin(vault_bytes)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Carrier Steganalysis & Integrity Audit",
+        ))
+        .stdout(predicate::str::contains("ShadowVault Encrypted Container"))
+        .stdout(predicate::str::contains("ENCRYPTED CONTAINER"));
+}
+
+#[test]
+fn cli_audit_stdin_dash_with_passphrase() {
+    let clean_png = vec![
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    let assert_cmd = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", "-", "-p", "MySuperSecurePassphrase!2026", "--json"])
+        .write_stdin(clean_png)
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_cmd.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["carrier"]["carrier_type"], "png_image");
+    assert_eq!(json["passphrase"]["score"], 4);
+}
+
+#[test]
+fn cli_audit_mixed_case_sequential_passphrase() {
+    let assert_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", "-p", "AbCdEf999!", "--json"])
+        .assert()
+        .success();
+
+    let output = String::from_utf8(assert_json.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(json["passphrase"]["has_sequential"], true);
 }

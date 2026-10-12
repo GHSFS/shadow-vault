@@ -322,4 +322,208 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Audit passphrase strength, Shannon entropy, and steganography carrier anomalies
+    #[command(name = "audit")]
+    Audit {
+        /// Target file to audit (.svault container, stego carrier, or secret key file)
+        #[arg(value_name = "TARGET")]
+        target: Option<PathBuf>,
+
+        /// Direct passphrase to audit for strength, entropy, and vulnerability patterns
+        #[arg(short, long)]
+        passphrase: Option<String>,
+
+        /// Output audit report in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Manage encrypted RFC 6238 TOTP 2FA vault (.svault)
+    #[command(name = "totp", visible_alias = "2fa")]
+    Totp {
+        #[command(subcommand)]
+        action: TotpAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TotpAction {
+    /// Add a new TOTP 2FA secret or URI to the encrypted vault
+    #[command(visible_alias = "new")]
+    Add {
+        /// Account name or identifier (e.g. 'GitHub:alice' or 'alice@example.com')
+        #[arg(value_name = "NAME")]
+        name: Option<String>,
+
+        /// Base32 secret key (e.g. 'JBSWY3DPEHPK3PXP')
+        #[arg(short, long)]
+        secret: Option<String>,
+
+        /// Key URI in 'otpauth://totp/...' format
+        #[arg(short, long)]
+        uri: Option<String>,
+
+        /// Optional issuer name (e.g. 'GitHub', 'Google')
+        #[arg(short, long)]
+        issuer: Option<String>,
+
+        /// Hash algorithm (SHA1, SHA256, SHA512; default: SHA1)
+        #[arg(long, default_value = "SHA1")]
+        algorithm: String,
+
+        /// Number of OTP digits (6..=8; default: 6)
+        #[arg(short, long, default_value_t = 6)]
+        digits: u32,
+
+        /// Time step period in seconds (default: 30)
+        #[arg(long, default_value_t = 30)]
+        period: u64,
+
+        /// Path to the encrypted .svault container
+        #[arg(short, long, default_value = "totp.svault")]
+        vault: PathBuf,
+
+        /// Encryption passphrase for the vault
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Bind container to current Windows user/machine via DPAPI
+        #[arg(long)]
+        dpapi: bool,
+    },
+
+    /// Generate the current live 2FA code for an account
+    #[command(visible_alias = "get", visible_alias = "gen")]
+    Code {
+        /// Account name or identifier
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Explicit timestamp in seconds since Unix epoch (for testing/reproducibility)
+        #[arg(short, long)]
+        time: Option<u64>,
+
+        /// Path to the encrypted .svault container
+        #[arg(short, long, default_value = "totp.svault")]
+        vault: PathBuf,
+
+        /// Decryption passphrase for the vault
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Output generated code in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List all 2FA accounts stored in the encrypted vault
+    #[command(visible_alias = "ls")]
+    List {
+        /// Path to the encrypted .svault container
+        #[arg(short, long, default_value = "totp.svault")]
+        vault: PathBuf,
+
+        /// Decryption passphrase for the vault
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Output account list in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Remove an account from the encrypted vault
+    #[command(visible_alias = "rm", visible_alias = "delete")]
+    Remove {
+        /// Account name or identifier to remove
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Path to the encrypted .svault container
+        #[arg(short, long, default_value = "totp.svault")]
+        vault: PathBuf,
+
+        /// Vault passphrase
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Re-bind container with DPAPI upon saving
+        #[arg(long)]
+        dpapi: bool,
+    },
+
+    /// Verify a TOTP code against an account with time skew tolerance
+    #[command(visible_alias = "check")]
+    Verify {
+        /// Account name or identifier
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// 6-to-8 digit OTP code to verify
+        #[arg(value_name = "CODE")]
+        code: String,
+
+        /// Time skew tolerance in periods (default: 1, checks t-1, t, t+1)
+        #[arg(short, long, default_value_t = 1)]
+        skew: u32,
+
+        /// Explicit timestamp in seconds since Unix epoch (for testing)
+        #[arg(short, long)]
+        time: Option<u64>,
+
+        /// Path to the encrypted .svault container
+        #[arg(short, long, default_value = "totp.svault")]
+        vault: PathBuf,
+
+        /// Decryption passphrase for the vault
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Output verification result in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Import TOTP secret or key URI into the vault
+    Import {
+        /// Key URI in 'otpauth://totp/...' format
+        #[arg(short, long)]
+        uri: Option<String>,
+
+        /// File containing one or more otpauth URIs or JSON records
+        #[arg(short, long)]
+        file: Option<PathBuf>,
+
+        /// Path to the encrypted .svault container
+        #[arg(short, long, default_value = "totp.svault")]
+        vault: PathBuf,
+
+        /// Vault passphrase
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Bind container with DPAPI
+        #[arg(long)]
+        dpapi: bool,
+    },
+
+    /// Export account record as standard 'otpauth://totp/...' URI
+    Export {
+        /// Account name or identifier to export (if omitted, exports all)
+        #[arg(value_name = "NAME")]
+        name: Option<String>,
+
+        /// Path to the encrypted .svault container
+        #[arg(short, long, default_value = "totp.svault")]
+        vault: PathBuf,
+
+        /// Vault passphrase
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Output export records in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
 }

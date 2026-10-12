@@ -24,16 +24,16 @@ pub fn shred_file(path: &Path, passes: u8) -> Result<u64> {
 
         for pass in 0..total_passes {
             file.seek(SeekFrom::Start(0))?;
-            let mut remaining = len as usize;
+            let mut remaining = len;
             while remaining > 0 {
-                let to_write = remaining.min(chunk_size);
+                let to_write = remaining.min(chunk_size as u64) as usize;
                 match pass % 3 {
                     0 => buf[..to_write].fill(0x00),
                     1 => buf[..to_write].fill(0xFF),
                     _ => rand::thread_rng().fill_bytes(&mut buf[..to_write]),
                 }
                 file.write_all(&buf[..to_write])?;
-                remaining -= to_write;
+                remaining -= to_write as u64;
             }
             file.sync_all()?;
         }

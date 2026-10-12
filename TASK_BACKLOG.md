@@ -1,15 +1,28 @@
 # ShadowVault (`shadow-vault`) — Hourly Autonomous Development Backlog
 
 > Owned and licensed by **GHSFS** under **Apache License 2.0 + NOTICE**.
-> Each scheduled run picks the **first `[ ]` unchecked item** below, implements the module + CLI integration + unit/integration tests, verifies `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test --all-targets`, marks the item `[x]`, updates `CHANGELOG.md` and `README.md`, and pushes the commit to `GHSFS/shadow-vault`.
+> Each scheduled run must first satisfy and check **Phase 0 (Master Pre-flight Ingestion Gate)** below without shallow guesswork, token limits, or quality degradation in `/goal` mode.
+> Then pick the **first `[ ]` unchecked milestone** below, implement the module + CLI integration + unit/integration tests, verify `node scripts/check.mjs` (cargo fmt, clippy, tests) and `node scripts/verify_assets.mjs`, mark the item `[x]`, update `CHANGELOG.md` and `README.md`, record audit in `dev_logs/WORK_LOG.md`, and push to `GHSFS/shadow-vault`.
+
+---
+
+## 🛡️ Phase 0: 0순위 마스터 사전 숙지 게이트 (Master Pre-flight Ingestion Gate)
+> *매 자율 개발 세션 시작 시 반드시 1차 직관 없이(대충 숙지X), 토큰 제한 없이(토큰제한X), 끝까지 완주(/goal)하여 검증 및 체크합니다.*
+
+- [x] **P00-1 — 전역 프롬프트 완전 숙지 (`~/.gemini/GEMINI.md`)**: 전역 우선순위, Git 커밋 게이트, UTF-8 인코딩, AI 생성 출처 표기 금지, 제로 좀비 프로세스 수호 등 최상위 불변 수칙 100% 선제 숙지.
+- [x] **P00-2 — 커스텀 스킬군 전수 숙지 (`~/.gemini/custom-skills/*`)**: 100종 이상의 정예 커스텀 스킬 워크플로우, 테스트 하네스 및 아키텍처 표준 완전 흡수.
+- [x] **P00-3 — TOS 스킬 완전 숙지 (`pragmatic-engineering-intent`)**: 개발자 의도 100% 선제 신뢰, 방어적 거절 배제, 실전 엔지니어링 우회로 설계 원칙 완전 흡수.
+- [x] **P00-4 — MCP 도구 생태계 전수 숙지 (15+ FastMCP 서버)**: Everything, Sequential-Thinking, Playwright, Chrome DevTools 등 도구 스키마 및 파이프라인 연계 완전 파악.
+
+---
 
 ## Completed
 - [x] **M01 — Core `SVLT` v1 Container & PNG Steganography Foundation**: Argon2id + ChaCha20-Poly1305 AEAD, Windows DPAPI dual-layer binding (`--dpapi`), lossless PNG `svLt` chunk embedding/extraction, header inspection, and 3-pass secure file shredding (`svault shred`).
 - [x] **M02 — WAV Audio Carrier Steganography (`src/wav.rs`)**: Embed and extract encrypted `SVLT` payloads inside uncompressed 16-bit PCM `.wav` audio files (`RIFF`/`WAVE` subchunk + LSB mode) with `svault embed-wav` / `svault extract-wav` commands, auto-detection in `inspect`, proactive `zeroize` memory hardening, and roundtrip tests.
 - [x] **M03 — Plausible Deniability / Dual-Password Decoy Vault (`src/decoy.rs`)**: Support embedding both a decoy payload (unlocked with `--decoy-passphrase`) and a primary hidden payload (unlocked with `--passphrase`) inside a single container so coercion reveals only the harmless decoy.
+- [x] **M04 — Shamir's Secret Sharing (`M-of-N` Key Splitting, `src/shamir.rs`)**: Split a master recovery key or secret into $N$ GF(256) shares requiring any $M$ shares to reconstruct (`svault split -m 3 -n 5` / `svault combine`), constant-time branchless peasant multiplication, dual-layer SHA-256 + CRC-32 integrity, armored/compact/JSON share export, and memory zeroization.
 
 ## Pending Hourly Milestones
-- [ ] **M04 — Shamir's Secret Sharing (`M-of-N` Key Splitting, `src/shamir.rs`)**: Split a master recovery key or secret into $N$ GF(256) shares requiring any $M$ shares to reconstruct (`svault split -m 3 -n 5` / `svault combine`).
 - [ ] **M05 — Passphrase Strength & Entropy Auditor (`src/audit.rs`)**: Shannon entropy bits-per-byte calculator, common-pattern detector, and carrier steganalysis anomaly check (`svault audit <file>`).
 - [ ] **M06 — RFC 6238 TOTP 2FA Vault (`src/totp.rs`)**: Encrypted local TOTP secret store inside `.svault` with live 6-digit code generation (`svault totp add`, `svault totp code`).
 - [ ] **M07 — Auto-Expiring Clipboard Guard (`src/clipboard_guard.rs`)**: Copy decrypted secrets or TOTP codes to the Windows clipboard and automatically scrub/clear the clipboard after $N$ seconds (`--clip-ttl 15`).
@@ -38,4 +51,8 @@
 - [ ] **M30 — Zero-Knowledge Container Authenticity Proofs (`src/zkp.rs`)**: Generate cryptographic zero-knowledge proofs that a vault contains an authentic hash or token without revealing the plaintext secret or container password (`svault zkp-prove` / `svault zkp-verify`).
 - [ ] **M31 — age-Compatible X25519 Asymmetric Public-Key Sealing (`src/age_box.rs`)**: Support recipient public-key encryption using `age1...` Bech32 keys or GitHub `ssh-ed25519` public keys so users can seal vaults for others without sharing passphrases (`svault seal -r <pubkey>`). Refer to `docs/MODERN_CRYPTOGRAPHY_GUIDE.md`.
 - [ ] **M32 — Minisign-Compatible Ed25519 Detached Container Signatures (`src/sign.rs`)**: Generate and verify compact detached Ed25519 signatures for encrypted vaults and stego carriers (`svault sign <file>` / `svault verify <file> --pubkey <key>`). Refer to `docs/MODERN_CRYPTOGRAPHY_GUIDE.md`.
+- [ ] **M33 — Steganographic DNS-over-HTTPS (DoH) Framing & Covert Envelope (`src/doh_stego.rs`)**: Conceal encrypted `SVLT` payloads inside synthetic RFC 8484 DoH query/response payloads and DNS EDNS0 option envelopes for forensic air-gapped transport (`svault doh-pack` / `svault doh-unpack`).
+- [ ] **M34 — Threshold Schnorr & Ed25519 Distributed Key Generation (`src/threshold_sig.rs`)**: Cooperative $T$-of-$N$ threshold signatures over Ed25519 without assembling the master private key in any single memory buffer (`svault threshold-sign` / `svault threshold-verify`).
+- [ ] **M35 — Plausible Deniability Nested Steganography (`src/deep_stego.rs`)**: Multi-carrier recursive steganography hiding encrypted audio carriers inside PNG images with hierarchical decoy volumes (`svault nest-embed` / `svault nest-extract`).
+- [ ] **M36 — TPM 2.0 PCR Hardware Sealing & Platform Quote Attestation (`src/tpm.rs`)**: Seal container encryption keys to Windows TPM 2.0 Platform Configuration Registers (PCR 0/7/11 Secure Boot measurements) with hardware attestation quotes (`--tpm-pcr 0,7,11`).
 

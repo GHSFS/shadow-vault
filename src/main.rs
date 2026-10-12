@@ -6,6 +6,7 @@ mod cli;
 mod crypto;
 mod decoy;
 mod error;
+mod shamir;
 mod shred;
 mod stego;
 mod wav;
@@ -15,6 +16,7 @@ use clap::Parser;
 use cli::{Cli, Commands};
 use colored::Colorize;
 use std::fs;
+use std::io::{Read, Write};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -302,6 +304,146 @@ fn main() -> Result<()> {
                 wiped,
                 passes
             );
+        }
+        Commands::Split {
+            input,
+            secret,
+            threshold,
+            shares,
+            output_prefix,
+            json,
+            compact,
+        } => {
+            let secret_bytes = if let Some(path) = input {
+                if path.to_str() == Some("-") {
+                    let mut buf = Vec::new();
+                    std::io::stdin()
+                        .read_to_end(&mut buf)
+                        .context("failed to read secret from stdin")?;
+                    buf
+                } else {
+                    fs::read(&path).with_context(|| {
+                        format!("failed to read secret file: {}", path.display())
+                    })?
+                }
+            } else if let Some(s) = secret {
+                s.into_bytes()
+            } else {
+                let mut buf = Vec::new();
+                std::io::stdin()
+                    .read_to_end(&mut buf)
+                    .context("failed to read secret from stdin")?;
+                buf
+            };
+
+            let share_objs = shamir::split_secret(&secret_bytes, threshold, shares)?;
+
+            if let Some(prefix) = output_prefix {
+                if let Some(parent) = prefix.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                for s in &share_objs {
+                    let file_name = format!("{}_{}.share", prefix.display(), s.index);
+                    fs::write(&file_name, s.to_armored())
+                        .with_context(|| format!("failed to write share file: {file_name}"))?;
+                }
+                println!(
+                    "{} split {} bytes into {} shares (threshold: {}) with prefix {}",
+                    "ok".green().bold(),
+                    secret_bytes.len(),
+                    shares,
+                    threshold,
+                    prefix.display()
+                );
+            } else if json {
+                println!("{}", serde_json::to_string_pretty(&share_objs)?);
+            } else if compact {
+                for s in &share_objs {
+                    println!("{}", s.to_compact());
+                }
+            } else {
+                for (i, s) in share_objs.iter().enumerate() {
+                    if i > 0 {
+                        println!();
+                    }
+                    print!("{}", s.to_armored());
+                }
+            }
+        }
+        Commands::Combine {
+            shares,
+            output,
+            raw,
+            json,
+        } => {
+            let mut share_objs = Vec::new();
+            if shares.is_empty() {
+                let mut content = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut content)
+                    .context("failed to read shares from stdin")?;
+                for block in content.split("-----END SHADOW VAULT SHARE-----") {
+                    let trimmed = block.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    let full_block = format!("{}\n-----END SHADOW VAULT SHARE-----", trimmed);
+                    share_objs.push(shamir::Share::from_armored(&full_block)?);
+                }
+            } else {
+                for item in &shares {
+                    let path = std::path::Path::new(item);
+                    if path.exists() {
+                        let text = fs::read_to_string(path).with_context(|| {
+                            format!("failed to read share file: {}", path.display())
+                        })?;
+                        share_objs.push(text.parse::<shamir::Share>()?);
+                    } else {
+                        share_objs.push(item.parse::<shamir::Share>()?);
+                    }
+                }
+            }
+
+            let recovered = shamir::combine_shares(&share_objs)?;
+
+            if let Some(out_path) = output {
+                fs::write(&out_path, &*recovered).with_context(|| {
+                    format!("failed to write recovered file: {}", out_path.display())
+                })?;
+                println!(
+                    "{} combined {} shares -> {} ({} bytes, hash: {})",
+                    "ok".green().bold(),
+                    share_objs.len(),
+                    out_path.display(),
+                    recovered.len(),
+                    &share_objs[0].secret_hash[..8]
+                );
+            } else if json {
+                let is_utf8 = std::str::from_utf8(&recovered).is_ok();
+                let result = serde_json::json!({
+                    "success": true,
+                    "secret_len": recovered.len(),
+                    "secret_hash": share_objs[0].secret_hash,
+                    "secret_hex": recovered.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                    "secret_utf8": if is_utf8 { std::str::from_utf8(&recovered).ok() } else { None },
+                });
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else if raw {
+                std::io::stdout()
+                    .write_all(&recovered)
+                    .context("failed to write raw secret to stdout")?;
+            } else if let Ok(s) = std::str::from_utf8(&recovered) {
+                print!("{s}");
+                if !s.ends_with('\n') {
+                    println!();
+                }
+            } else {
+                std::io::stdout()
+                    .write_all(&recovered)
+                    .context("failed to write binary secret to stdout")?;
+            }
         }
     }
 

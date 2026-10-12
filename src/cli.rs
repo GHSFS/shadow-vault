@@ -35,11 +35,11 @@ pub enum Commands {
         passphrase: String,
 
         /// Optional decoy file to create a plausible deniability container
-        #[arg(short = 'd', long = "decoy")]
+        #[arg(short = 'd', long = "decoy", requires = "decoy_passphrase")]
         decoy: Option<PathBuf>,
 
         /// Decoy passphrase when --decoy is specified
-        #[arg(long = "decoy-passphrase")]
+        #[arg(long = "decoy-passphrase", requires = "decoy")]
         decoy_passphrase: Option<String>,
 
         /// Explicit random padding bytes for size obfuscation
@@ -55,7 +55,7 @@ pub enum Commands {
     #[command(name = "encrypt-decoy", visible_alias = "enc-decoy")]
     EncryptDecoy {
         /// Primary secret file to conceal
-        #[arg(short = 'i', long = "primary")]
+        #[arg(short = 'i', long = "primary", visible_alias = "input")]
         primary: PathBuf,
 
         /// Decoy file to show under coercion
@@ -143,11 +143,11 @@ pub enum Commands {
         passphrase: String,
 
         /// Optional decoy file to create a plausible deniability container
-        #[arg(short = 'd', long = "decoy")]
+        #[arg(short = 'd', long = "decoy", requires = "decoy_passphrase")]
         decoy: Option<PathBuf>,
 
         /// Decoy passphrase when --decoy is specified
-        #[arg(long = "decoy-passphrase")]
+        #[arg(long = "decoy-passphrase", requires = "decoy")]
         decoy_passphrase: Option<String>,
 
         /// Explicit random padding bytes for size obfuscation
@@ -207,11 +207,11 @@ pub enum Commands {
         lsb: bool,
 
         /// Optional decoy file to create a plausible deniability container
-        #[arg(short = 'd', long = "decoy")]
+        #[arg(short = 'd', long = "decoy", requires = "decoy_passphrase")]
         decoy: Option<PathBuf>,
 
         /// Decoy passphrase when --decoy is specified
-        #[arg(long = "decoy-passphrase")]
+        #[arg(long = "decoy-passphrase", requires = "decoy")]
         decoy_passphrase: Option<String>,
 
         /// Explicit random padding bytes for size obfuscation
@@ -265,5 +265,61 @@ pub enum Commands {
         /// Number of overwrite passes (default: 3)
         #[arg(short, long, default_value_t = 3)]
         passes: u8,
+    },
+
+    /// Split a secret or master recovery key into M-of-N Shamir shares (GF(256))
+    #[command(name = "split", visible_alias = "share")]
+    Split {
+        /// Input file containing secret or master key (use '-' for stdin)
+        #[arg(short, long, conflicts_with = "secret")]
+        input: Option<PathBuf>,
+
+        /// Direct text secret or passphrase to split
+        #[arg(short, long, conflicts_with = "input")]
+        secret: Option<String>,
+
+        /// Threshold of shares required to reconstruct the secret (2..=255)
+        #[arg(short = 'm', long = "threshold", default_value_t = 3)]
+        threshold: u8,
+
+        /// Total number of shares to generate (threshold..=255)
+        #[arg(short = 'n', long = "shares", default_value_t = 5)]
+        shares: u8,
+
+        /// Output path prefix to save shares as files (e.g. 'share' writes 'share_1.share')
+        #[arg(short, long)]
+        output_prefix: Option<PathBuf>,
+
+        /// Output shares in JSON array format
+        #[arg(long)]
+        json: bool,
+
+        /// Output shares in compact single-line format
+        #[arg(long)]
+        compact: bool,
+    },
+
+    /// Combine M-of-N Shamir shares to reconstruct the original secret
+    #[command(
+        name = "combine",
+        visible_alias = "recover",
+        visible_alias = "reconstruct"
+    )]
+    Combine {
+        /// Share files or armored share strings to combine
+        #[arg(value_name = "SHARES")]
+        shares: Vec<String>,
+
+        /// Output file path for reconstructed secret (if omitted, writes to stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Force raw binary output when writing to stdout
+        #[arg(long)]
+        raw: bool,
+
+        /// Output recovery result in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 }

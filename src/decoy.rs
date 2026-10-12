@@ -14,7 +14,7 @@
 
 use crate::crypto::{
     derive_key, dpapi_protect, dpapi_unprotect, ContainerInfo, FLAG_DECOY, FLAG_DPAPI, HEADER_LEN,
-    MAGIC, NONCE_LEN, SALT_LEN, VERSION, VERSION_V2,
+    MAGIC, NONCE_LEN, SALT_LEN, VERSION_V2,
 };
 use crate::error::{Error, Result};
 use chacha20poly1305::aead::{Aead, KeyInit};
@@ -23,7 +23,7 @@ use rand::RngCore;
 use zeroize::Zeroizing;
 
 pub const DECOY_HEADER_LEN: usize = HEADER_LEN + 4; // 34 + 4 = 38 bytes
-pub const MIN_HIDDEN_SLOT_LEN: usize = SALT_LEN + NONCE_LEN + 16; // 16 + 12 + 16 = 44 bytes
+pub const MIN_HIDDEN_SLOT_LEN: usize = SALT_LEN + NONCE_LEN + 4 + 16; // 16 + 12 + 4 + 16 = 48 bytes
 const MIN_RANDOM_PAD_LEN: usize = 32;
 const PAD_ALIGNMENT: usize = 256;
 
@@ -167,7 +167,9 @@ pub fn seal_decoy(
 
     // Frame hidden plaintext: [4-byte LE inner_len][inner_bytes][random padding]
     // Padding ensures the slot size is aligned and indistinguishable from random noise
-    let unpadded_len = 4 + hidden_inner.len();
+    let unpadded_len = 4usize
+        .checked_add(hidden_inner.len())
+        .ok_or_else(|| Error::Crypto("primary payload size overflow".into()))?;
     let default_pad = MIN_RANDOM_PAD_LEN
         + (PAD_ALIGNMENT - ((unpadded_len + MIN_RANDOM_PAD_LEN) % PAD_ALIGNMENT)) % PAD_ALIGNMENT;
     let pad_len = if padding_bytes > 0 {
@@ -176,7 +178,11 @@ pub fn seal_decoy(
         default_pad
     };
 
-    let mut hidden_plain = Zeroizing::new(Vec::with_capacity(unpadded_len + pad_len));
+    let total_plain_len = unpadded_len
+        .checked_add(pad_len)
+        .ok_or_else(|| Error::Crypto("padded hidden payload size overflow".into()))?;
+
+    let mut hidden_plain = Zeroizing::new(Vec::with_capacity(total_plain_len));
     hidden_plain.extend_from_slice(&inner_len.to_le_bytes());
     hidden_plain.extend_from_slice(&hidden_inner);
 
@@ -245,7 +251,9 @@ pub fn seal_v2(
     }
     let inner_len = inner.len() as u32;
 
-    let unpadded_len = 4 + inner.len();
+    let unpadded_len = 4usize
+        .checked_add(inner.len())
+        .ok_or_else(|| Error::Crypto("payload size overflow".into()))?;
     let default_pad = MIN_RANDOM_PAD_LEN
         + (PAD_ALIGNMENT - ((unpadded_len + MIN_RANDOM_PAD_LEN) % PAD_ALIGNMENT)) % PAD_ALIGNMENT;
     let pad_len = if padding_bytes > 0 {
@@ -254,7 +262,11 @@ pub fn seal_v2(
         default_pad
     };
 
-    let mut plain = Zeroizing::new(Vec::with_capacity(unpadded_len + pad_len));
+    let total_plain_len = unpadded_len
+        .checked_add(pad_len)
+        .ok_or_else(|| Error::Crypto("padded payload size overflow".into()))?;
+
+    let mut plain = Zeroizing::new(Vec::with_capacity(total_plain_len));
     plain.extend_from_slice(&inner_len.to_le_bytes());
     plain.extend_from_slice(&inner);
 
@@ -285,6 +297,9 @@ pub fn seal_v2(
 
 /// Open a v2 single-payload padded container.
 pub fn open_v2(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    if passphrase.is_empty() {
+        return Err(Error::Crypto("passphrase must not be empty".into()));
+    }
     if container.len() < HEADER_LEN + 4 + 16 {
         return Err(Error::Format(
             "container truncated or smaller than header".into(),
@@ -302,6 +317,11 @@ pub fn open_v2(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
         )));
     }
     let flags = container[5];
+    if (flags & FLAG_DECOY) != 0 {
+        return Err(Error::Format(
+            "container has FLAG_DECOY set; use open_decoy instead".into(),
+        ));
+    }
     let salt = &container[6..6 + SALT_LEN];
     let nonce_bytes = &container[6 + SALT_LEN..HEADER_LEN];
     let ciphertext = &container[HEADER_LEN..];
@@ -326,11 +346,15 @@ pub fn open_v2(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
             .map_err(|_| Error::Format("failed to read payload length".into()))?,
     ) as usize;
 
-    if 4 + inner_len > decrypted_plain.len() {
+    let required_len = 4usize
+        .checked_add(inner_len)
+        .ok_or_else(|| Error::Format("invalid inner payload length".into()))?;
+
+    if required_len > decrypted_plain.len() {
         return Err(Error::Format("invalid inner payload length".into()));
     }
 
-    let inner = &decrypted_plain[4..4 + inner_len];
+    let inner = &decrypted_plain[4..required_len];
 
     if (flags & FLAG_DPAPI) != 0 {
         dpapi_unprotect(inner)
@@ -341,23 +365,46 @@ pub fn open_v2(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
 
 /// Seamlessly open a plausible deniability container.
 ///
-/// Attempts to decrypt the hidden primary slot first; if authentication
-/// fails, attempts to decrypt the plausible decoy slot.
+/// Attempts to decrypt the plausible decoy slot first (coercion resistance and side-channel defense);
+/// if authentication fails, attempts to decrypt the hidden primary slot.
 pub fn open_decoy(container: &[u8], passphrase: &str) -> Result<DecoyOpenResult> {
     if passphrase.is_empty() {
         return Err(Error::Crypto("passphrase must not be empty".into()));
     }
 
     validate_decoy_header(container)?;
+    parse_decoy_body_len(container)?;
 
-    // Attempt 1: Hidden primary slot
-    if let Ok(primary) = open_primary_slot(container, passphrase) {
+    // Attempt 1: Plausible decoy slot
+    // Probing decoy slot first ensures operators surrendering the decoy passphrase under coercion
+    // decrypt with minimal delay and zero timing-side-channel indication that a hidden primary slot exists.
+    let decoy_res = open_decoy_slot(container, passphrase);
+    if let Ok(decoy) = decoy_res {
+        return Ok(DecoyOpenResult::Decoy(decoy));
+    }
+
+    // If hardware binding failed, short-circuit immediately since primary slot also requires DPAPI.
+    if let Err(Error::Dpapi(e)) = decoy_res {
+        return Err(Error::Dpapi(e));
+    }
+    // If decoy slot has structural format corruption, short-circuit immediately.
+    if let Err(Error::Format(e)) = decoy_res {
+        return Err(Error::Format(e));
+    }
+
+    // Attempt 2: Hidden primary slot
+    let primary_res = open_primary_slot(container, passphrase);
+    if let Ok(primary) = primary_res {
         return Ok(DecoyOpenResult::Primary(primary));
     }
 
-    // Attempt 2: Decoy slot
-    if let Ok(decoy) = open_decoy_slot(container, passphrase) {
-        return Ok(DecoyOpenResult::Decoy(decoy));
+    // Surface DPAPI errors explicitly so operators know hardware binding rejected the container
+    // rather than misattributing failures to incorrect passphrases.
+    if let Err(Error::Dpapi(e)) = primary_res {
+        return Err(Error::Dpapi(e));
+    }
+    if let Err(Error::Format(e)) = primary_res {
+        return Err(Error::Format(e));
     }
 
     Err(Error::Crypto(
@@ -372,15 +419,17 @@ pub fn open_decoy_explicit(
     decoy_passphrase: Option<&str>,
 ) -> Result<Vec<u8>> {
     if let Some(decoy_p) = decoy_passphrase {
-        if !decoy_p.is_empty() {
-            return open_decoy_payload(container, decoy_p);
+        if decoy_p.is_empty() {
+            return Err(Error::Crypto("passphrase must not be empty".into()));
         }
+        return open_decoy_payload(container, decoy_p);
     }
 
     if let Some(p) = passphrase {
-        if !p.is_empty() {
-            return open_decoy(container, p).map(|r| r.into_bytes());
+        if p.is_empty() {
+            return Err(Error::Crypto("passphrase must not be empty".into()));
         }
+        return open_decoy(container, p).map(|r| r.into_bytes());
     }
 
     Err(Error::Crypto(
@@ -402,6 +451,9 @@ pub fn open_decoy_payload(container: &[u8], passphrase: &str) -> Result<Vec<u8>>
 
 /// Attempt to open specifically the primary hidden slot (internal helper).
 pub fn open_primary_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    if passphrase.is_empty() {
+        return Err(Error::Crypto("passphrase must not be empty".into()));
+    }
     validate_decoy_header(container)?;
 
     let decoy_body_len = parse_decoy_body_len(container)?;
@@ -417,6 +469,10 @@ pub fn open_primary_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> 
     let hidden_salt = &hidden_slot[..SALT_LEN];
     let hidden_nonce_bytes = &hidden_slot[SALT_LEN..SALT_LEN + NONCE_LEN];
     let hidden_ciphertext = &hidden_slot[SALT_LEN + NONCE_LEN..];
+
+    if hidden_ciphertext.len() < 20 {
+        return Err(Error::Format("hidden slot ciphertext truncated".into()));
+    }
 
     let key_bytes = derive_key(passphrase.as_bytes(), hidden_salt)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
@@ -438,11 +494,15 @@ pub fn open_primary_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> 
             .map_err(|_| Error::Format("failed to read payload length".into()))?,
     ) as usize;
 
-    if 4 + inner_len > decrypted_plain.len() {
+    let required_len = 4usize
+        .checked_add(inner_len)
+        .ok_or_else(|| Error::Format("invalid inner payload length".into()))?;
+
+    if required_len > decrypted_plain.len() {
         return Err(Error::Format("invalid inner payload length".into()));
     }
 
-    let inner = &decrypted_plain[4..4 + inner_len];
+    let inner = &decrypted_plain[4..required_len];
     let flags = container[5];
 
     if (flags & FLAG_DPAPI) != 0 {
@@ -454,6 +514,9 @@ pub fn open_primary_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> 
 
 /// Attempt to open specifically the plausible decoy slot (internal helper).
 pub fn open_decoy_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    if passphrase.is_empty() {
+        return Err(Error::Crypto("passphrase must not be empty".into()));
+    }
     validate_decoy_header(container)?;
 
     let flags = container[5];
@@ -461,7 +524,9 @@ pub fn open_decoy_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     let decoy_nonce_bytes = &container[6 + SALT_LEN..HEADER_LEN];
     let decoy_body_len = parse_decoy_body_len(container)?;
 
-    let decoy_end = DECOY_HEADER_LEN + decoy_body_len;
+    let decoy_end = DECOY_HEADER_LEN
+        .checked_add(decoy_body_len)
+        .ok_or_else(|| Error::Format("integer overflow in decoy container layout".into()))?;
     let decoy_body = &container[DECOY_HEADER_LEN..decoy_end];
 
     let ciphertext = if (flags & FLAG_DPAPI) != 0 {
@@ -470,13 +535,18 @@ pub fn open_decoy_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
         decoy_body.to_vec()
     };
 
+    if ciphertext.len() < 16 {
+        return Err(Error::Format("decoy ciphertext truncated".into()));
+    }
+
     let key_bytes = derive_key(passphrase.as_bytes(), decoy_salt)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(decoy_nonce_bytes);
 
-    cipher
+    let plain = cipher
         .decrypt(nonce, ciphertext.as_ref())
-        .map_err(|_| Error::Crypto("decoy authentication failed".into()))
+        .map_err(|_| Error::Crypto("decoy authentication failed".into()))?;
+    Ok(plain)
 }
 
 /// Inspect a plausible deniability container without exposing hidden slot contents.
@@ -500,16 +570,19 @@ pub fn inspect_decoy(container: &[u8]) -> Result<ContainerInfo> {
 
 /// Checks whether a byte slice contains a valid `SVLT` decoy container signature and flag.
 pub fn is_decoy_container(container: &[u8]) -> bool {
-    if container.len() < DECOY_HEADER_LEN {
+    if container.len() < DECOY_HEADER_LEN + 16 + MIN_HIDDEN_SLOT_LEN {
         return false;
     }
     if &container[0..4] != MAGIC {
         return false;
     }
-    if container[4] != VERSION && container[4] != VERSION_V2 {
+    if container[4] != VERSION_V2 {
         return false;
     }
-    (container[5] & FLAG_DECOY) != 0
+    if (container[5] & FLAG_DECOY) == 0 {
+        return false;
+    }
+    parse_decoy_body_len(container).is_ok()
 }
 
 fn validate_decoy_header(container: &[u8]) -> Result<()> {
@@ -522,9 +595,9 @@ fn validate_decoy_header(container: &[u8]) -> Result<()> {
         ));
     }
     let version = container[4];
-    if version != VERSION && version != VERSION_V2 {
+    if version != VERSION_V2 {
         return Err(Error::Format(format!(
-            "unsupported container version: {version}"
+            "unsupported container version for decoy: {version} (expected {VERSION_V2})"
         )));
     }
     let flags = container[5];
@@ -537,18 +610,28 @@ fn validate_decoy_header(container: &[u8]) -> Result<()> {
 }
 
 fn parse_decoy_body_len(container: &[u8]) -> Result<usize> {
+    if container.len() < DECOY_HEADER_LEN {
+        return Err(Error::Format("decoy container header truncated".into()));
+    }
     let len_bytes: [u8; 4] = container[HEADER_LEN..DECOY_HEADER_LEN]
         .try_into()
         .map_err(|_| Error::Format("failed to read decoy body length".into()))?;
     let len = u32::from_le_bytes(len_bytes) as usize;
 
-    let decoy_end = DECOY_HEADER_LEN
+    if len < 16 {
+        return Err(Error::Format(
+            "decoy body length too small (must include AEAD tag)".into(),
+        ));
+    }
+
+    let min_total_len = DECOY_HEADER_LEN
         .checked_add(len)
+        .and_then(|l| l.checked_add(MIN_HIDDEN_SLOT_LEN))
         .ok_or_else(|| Error::Format("decoy body length overflow".into()))?;
 
-    if decoy_end > container.len() {
+    if min_total_len > container.len() {
         return Err(Error::Format(
-            "decoy body length exceeds container size".into(),
+            "decoy container truncated or hidden slot not present".into(),
         ));
     }
 
@@ -705,13 +788,14 @@ mod tests {
         let primary_secret = b"confidential payload requiring strong deniability";
         let decoy_payload = b"ordinary harmless text";
 
+        // Use 2048-byte padding to provide statistically rigorous Shannon entropy sampling
         let container = seal_decoy(
             primary_secret,
             "pass-secret-123",
             decoy_payload,
             "pass-decoy-456",
             false,
-            0,
+            2048,
         )
         .unwrap();
 
@@ -738,9 +822,9 @@ mod tests {
             }
         }
 
-        // For uniform random noise, entropy should be very close to 8.0 bits/byte.
+        // For uniform random noise over 2048+ bytes, entropy should be very close to 8.0 bits/byte.
         assert!(
-            entropy > 7.2,
+            entropy > 7.7,
             "hidden slot entropy ({entropy:.3} bits/byte) should be near-ideal random noise"
         );
     }
@@ -822,5 +906,131 @@ mod tests {
         assert_eq!(sensitive[0], 0x42);
         sensitive.zeroize();
         assert_eq!(sensitive[0], 0);
+    }
+
+    #[test]
+    fn decoy_truncated_hidden_slot_rejected() {
+        let container = seal_decoy(
+            b"hidden primary secret",
+            "prim-key",
+            b"decoy note",
+            "dec-key",
+            false,
+            0,
+        )
+        .unwrap();
+
+        let decoy_body_len = parse_decoy_body_len(&container).unwrap();
+        let hidden_offset = DECOY_HEADER_LEN + decoy_body_len;
+
+        // Truncate right in the middle of the hidden slot (e.g. only 10 bytes of hidden slot)
+        let truncated = &container[..hidden_offset + 10];
+        assert!(inspect_decoy(truncated).is_err());
+        assert!(open_decoy(truncated, "prim-key").is_err());
+        assert!(open_decoy(truncated, "dec-key").is_err());
+        assert!(!is_decoy_container(truncated));
+    }
+
+    #[test]
+    fn decoy_version_confusion_rejected() {
+        let mut container = seal_decoy(b"hidden", "p1", b"decoy", "p2", false, 0).unwrap();
+        // Alter version from 2 to 1
+        container[4] = 1;
+        assert!(!is_decoy_container(&container));
+        assert!(inspect_decoy(&container).is_err());
+        assert!(open_decoy(&container, "p1").is_err());
+        assert!(open_decoy(&container, "p2").is_err());
+    }
+
+    #[test]
+    fn decoy_body_len_underflow_rejected() {
+        let mut container = seal_decoy(b"hidden", "p1", b"decoy", "p2", false, 0).unwrap();
+        // Set decoy body length to 5 (less than 16-byte Poly1305 tag)
+        container[HEADER_LEN..DECOY_HEADER_LEN].copy_from_slice(&5u32.to_le_bytes());
+        assert!(inspect_decoy(&container).is_err());
+        let err = open_decoy(&container, "p1").unwrap_err();
+        assert!(matches!(err, Error::Format(_)));
+        assert!(open_decoy(&container, "p2").is_err());
+    }
+
+    #[test]
+    fn decoy_is_decoy_container_large_body_truncated_hidden_slot() {
+        let large_decoy = vec![0x42u8; 150];
+        let container = seal_decoy(
+            b"hidden primary secret",
+            "prim-key",
+            &large_decoy,
+            "dec-key",
+            false,
+            0,
+        )
+        .unwrap();
+
+        let decoy_body_len = parse_decoy_body_len(&container).unwrap();
+        let hidden_offset = DECOY_HEADER_LEN + decoy_body_len;
+
+        // Truncated buffer has length > 98 bytes, but is missing part of the hidden slot
+        let truncated = &container[..hidden_offset + 10];
+        assert!(!is_decoy_container(truncated));
+        assert!(inspect_decoy(truncated).is_err());
+        assert!(matches!(
+            open_decoy(truncated, "prim-key"),
+            Err(Error::Format(_))
+        ));
+    }
+
+    #[test]
+    fn decoy_open_v2_rejects_decoy_container() {
+        let container = seal_decoy(b"primary", "p1", b"decoy", "p2", false, 0).unwrap();
+        let res = open_v2(&container, "p1");
+        assert!(matches!(res, Err(Error::Format(_))));
+    }
+
+    #[test]
+    fn decoy_empty_passphrase_rejected_in_all_entry_points() {
+        let container = seal_decoy(b"primary", "p1", b"decoy", "p2", false, 0).unwrap();
+        let v2_container = seal_v2(b"secret", "v2-pass", false, 64).unwrap();
+
+        assert!(matches!(open_decoy(&container, ""), Err(Error::Crypto(_))));
+        assert!(matches!(
+            open_primary_slot(&container, ""),
+            Err(Error::Crypto(_))
+        ));
+        assert!(matches!(
+            open_decoy_slot(&container, ""),
+            Err(Error::Crypto(_))
+        ));
+        assert!(matches!(open_v2(&v2_container, ""), Err(Error::Crypto(_))));
+        assert!(matches!(
+            crate::crypto::open(&v2_container, ""),
+            Err(Error::Crypto(_))
+        ));
+        assert!(matches!(
+            open_decoy_explicit(&container, Some(""), None),
+            Err(Error::Crypto(_))
+        ));
+        assert!(matches!(
+            open_decoy_explicit(&container, None, Some("")),
+            Err(Error::Crypto(_))
+        ));
+    }
+
+    #[test]
+    fn decoy_parse_body_len_truncated_header_does_not_panic() {
+        let small_buf = [0u8; 12];
+        assert!(parse_decoy_body_len(&small_buf).is_err());
+        assert!(!is_decoy_container(&small_buf));
+    }
+
+    #[test]
+    fn decoy_ciphertext_underflow_in_hidden_slot() {
+        let container = seal_decoy(b"primary", "p1", b"decoy", "p2", false, 0).unwrap();
+        let decoy_body_len = parse_decoy_body_len(&container).unwrap();
+        let hidden_offset = DECOY_HEADER_LEN + decoy_body_len;
+
+        // Truncate hidden slot to only salt + nonce + 10 bytes of ciphertext (< 20 required)
+        let truncated = &container[..hidden_offset + SALT_LEN + NONCE_LEN + 10];
+        let err = open_primary_slot(truncated, "p1").unwrap_err();
+        assert!(matches!(err, Error::Format(_)));
     }
 }

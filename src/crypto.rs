@@ -73,6 +73,9 @@ pub fn seal(plaintext: &[u8], passphrase: &str, bind_dpapi: bool) -> Result<Vec<
 
 /// Open a `SVLT` v1 or v2/decoy container and return the authenticated plaintext.
 pub fn open(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    if passphrase.is_empty() {
+        return Err(Error::Crypto("passphrase must not be empty".into()));
+    }
     if container.len() < HEADER_LEN + 16 {
         return Err(Error::Format(
             "container truncated or smaller than header".into(),
@@ -168,7 +171,7 @@ pub(crate) fn derive_key(passphrase: &[u8], salt: &[u8]) -> Result<Zeroizing<[u8
     // Domain-separate the derived key with SHA-256
     let mut hasher = Sha256::new();
     hasher.update(b"shadow-vault-v1-key");
-    hasher.update(*key);
+    hasher.update(key.as_slice());
     let mut derived = Zeroizing::new([0u8; 32]);
     derived.copy_from_slice(&hasher.finalize());
     Ok(derived)

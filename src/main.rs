@@ -2,7 +2,9 @@
 // http://www.apache.org/licenses/LICENSE-2.0>.
 // Copyright 2026 GHSFS. See the NOTICE file for attribution details.
 
+mod armor;
 mod audit;
+mod bmp;
 mod cli;
 mod clipboard_guard;
 mod crypto;
@@ -122,14 +124,18 @@ fn main() -> Result<()> {
             } else {
                 anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
             };
-            fs::write(&output, &plain)
-                .with_context(|| format!("failed to write output: {}", output.display()))?;
-            println!(
-                "{} decrypted {} bytes -> {}",
-                "ok".green().bold(),
-                plain.len(),
-                output.display()
-            );
+            if let Some(ref out_path) = output {
+                fs::write(out_path, &plain)
+                    .with_context(|| format!("failed to write output: {}", out_path.display()))?;
+                println!(
+                    "{} decrypted {} bytes -> {}",
+                    "ok".green().bold(),
+                    plain.len(),
+                    out_path.display()
+                );
+            } else if !clip {
+                anyhow::bail!("either --output or --clip must be provided");
+            }
             if clip {
                 match std::str::from_utf8(&plain) {
                     Ok(text) => {
@@ -219,14 +225,19 @@ fn main() -> Result<()> {
             } else {
                 anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
             };
-            fs::write(&output, &plain)
-                .with_context(|| format!("failed to write extracted file: {}", output.display()))?;
-            println!(
-                "{} extracted {} bytes -> {}",
-                "ok".green().bold(),
-                plain.len(),
-                output.display()
-            );
+            if let Some(ref out_path) = output {
+                fs::write(out_path, &plain).with_context(|| {
+                    format!("failed to write extracted file: {}", out_path.display())
+                })?;
+                println!(
+                    "{} extracted {} bytes -> {}",
+                    "ok".green().bold(),
+                    plain.len(),
+                    out_path.display()
+                );
+            } else if !clip {
+                anyhow::bail!("either --output or --clip must be provided");
+            }
             if clip {
                 match std::str::from_utf8(&plain) {
                     Ok(text) => {
@@ -323,14 +334,19 @@ fn main() -> Result<()> {
             } else {
                 anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
             };
-            fs::write(&output, &plain)
-                .with_context(|| format!("failed to write extracted file: {}", output.display()))?;
-            println!(
-                "{} extracted {} bytes -> {}",
-                "ok".green().bold(),
-                plain.len(),
-                output.display()
-            );
+            if let Some(ref out_path) = output {
+                fs::write(out_path, &plain).with_context(|| {
+                    format!("failed to write extracted file: {}", out_path.display())
+                })?;
+                println!(
+                    "{} extracted {} bytes -> {}",
+                    "ok".green().bold(),
+                    plain.len(),
+                    out_path.display()
+                );
+            } else if !clip {
+                anyhow::bail!("either --output or --clip must be provided");
+            }
             if clip {
                 match std::str::from_utf8(&plain) {
                     Ok(text) => {
@@ -354,24 +370,278 @@ fn main() -> Result<()> {
             plain.zeroize();
         }
 
+        Commands::EmbedBmp {
+            carrier,
+            secret,
+            output,
+            passphrase,
+            decoy,
+            decoy_passphrase,
+            padding,
+            dpapi,
+        } => {
+            let bmp_bytes = fs::read(&carrier)
+                .with_context(|| format!("failed to read carrier BMP: {}", carrier.display()))?;
+            let raw_secret = fs::read(&secret)
+                .with_context(|| format!("failed to read secret file: {}", secret.display()))?;
+            let sealed = if let Some(decoy_path) = decoy {
+                let d_pass = decoy_passphrase.ok_or_else(|| {
+                    anyhow::anyhow!("--decoy-passphrase is required when --decoy is specified")
+                })?;
+                let raw_decoy = fs::read(&decoy_path).with_context(|| {
+                    format!("failed to read decoy file: {}", decoy_path.display())
+                })?;
+                decoy::seal_decoy(
+                    &raw_secret,
+                    &passphrase,
+                    &raw_decoy,
+                    &d_pass,
+                    dpapi,
+                    padding,
+                )?
+            } else if padding > 0 {
+                decoy::seal_v2(&raw_secret, &passphrase, dpapi, padding)?
+            } else {
+                crypto::seal(&raw_secret, &passphrase, dpapi)?
+            };
+            let stego_bmp = bmp::embed_in_bmp(&bmp_bytes, &sealed)?;
+            fs::write(&output, &stego_bmp)
+                .with_context(|| format!("failed to write stego BMP: {}", output.display()))?;
+            println!(
+                "{} embedded {} bytes into {}",
+                "ok".green().bold(),
+                raw_secret.len(),
+                output.display()
+            );
+        }
+        Commands::ExtractBmp {
+            carrier,
+            output,
+            passphrase,
+            decoy_passphrase,
+            clip,
+            clip_ttl,
+        } => {
+            let bmp_bytes = fs::read(&carrier)
+                .with_context(|| format!("failed to read stego BMP: {}", carrier.display()))?;
+            let sealed = bmp::extract_from_bmp(&bmp_bytes)?;
+            let mut plain = if let Some(d_pass) = decoy_passphrase {
+                if crypto::is_decoy_container(&sealed) {
+                    decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
+                } else {
+                    crypto::open(&sealed, &d_pass)?
+                }
+            } else if let Some(p) = passphrase {
+                crypto::open(&sealed, &p)?
+            } else {
+                anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
+            };
+            if let Some(ref out_path) = output {
+                fs::write(out_path, &plain).with_context(|| {
+                    format!("failed to write extracted file: {}", out_path.display())
+                })?;
+                println!(
+                    "{} extracted {} bytes -> {}",
+                    "ok".green().bold(),
+                    plain.len(),
+                    out_path.display()
+                );
+            } else if !clip {
+                anyhow::bail!("either --output or --clip must be provided");
+            }
+            if clip {
+                match std::str::from_utf8(&plain) {
+                    Ok(text) => {
+                        let _ = clipboard_guard::guard_interactive(
+                            text,
+                            clip_ttl,
+                            Some("extracted secret"),
+                        )?;
+                    }
+                    Err(_) => {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&plain);
+                        let _ = clipboard_guard::guard_interactive(
+                            &b64,
+                            clip_ttl,
+                            Some("extracted binary (base64)"),
+                        )?;
+                    }
+                }
+            }
+            plain.zeroize();
+        }
+
+        Commands::Capacity { carrier, json } => {
+            let raw_bytes = fs::read(&carrier)
+                .with_context(|| format!("failed to read carrier file: {}", carrier.display()))?;
+
+            if raw_bytes.starts_with(b"BM") {
+                let cap = bmp::get_bmp_capacity(&raw_bytes)?;
+                if json {
+                    let out = serde_json::json!({
+                        "carrier": carrier.display().to_string(),
+                        "carrier_type": "bmp",
+                        "width": cap.width,
+                        "height": cap.height,
+                        "total_pixels": cap.total_pixels,
+                        "channel_bytes": cap.channel_bytes,
+                        "row_stride": cap.row_stride,
+                        "row_padding": cap.row_padding,
+                        "overhead_bytes": cap.overhead_bytes,
+                        "total_capacity_bytes": cap.total_capacity_bytes,
+                        "max_payload_bytes": cap.max_payload_bytes,
+                        "max_payload_kib": (cap.max_payload_bytes as f64) / 1024.0,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!("{}", "=== [CARRIER CAPACITY] ===".bold());
+                    println!("  Target File:           {}", carrier.display());
+                    println!("  Carrier Type:          BMP 24-bit Image Carrier");
+                    println!(
+                        "  Dimensions:            {} x {} ({} pixels)",
+                        cap.width, cap.height, cap.total_pixels
+                    );
+                    println!(
+                        "  Row Stride:            {} bytes (padding: {} bytes/row)",
+                        cap.row_stride, cap.row_padding
+                    );
+                    println!(
+                        "  Raw Channel Bytes:     {} bytes ({} bits)",
+                        cap.channel_bytes, cap.channel_bytes
+                    );
+                    println!(
+                        "  Envelope Overhead:     {} bytes (svLt magic + len + crc32)",
+                        cap.overhead_bytes
+                    );
+                    println!(
+                        "  Total Capacity:        {} bytes ({:.2} KiB)",
+                        cap.total_capacity_bytes,
+                        cap.total_capacity_bytes as f64 / 1024.0
+                    );
+                    println!(
+                        "  Max Usable Payload:    {} bytes ({:.2} KiB)",
+                        cap.max_payload_bytes,
+                        cap.max_payload_bytes as f64 / 1024.0
+                    );
+                }
+            } else if raw_bytes.len() >= 12
+                && &raw_bytes[0..4] == b"RIFF"
+                && &raw_bytes[8..12] == b"WAVE"
+            {
+                let cap = wav::get_wav_capacity(&raw_bytes)?;
+                if json {
+                    let out = serde_json::json!({
+                        "carrier": carrier.display().to_string(),
+                        "carrier_type": "wav",
+                        "audio_format": cap.audio_format,
+                        "num_channels": cap.num_channels,
+                        "sample_rate": cap.sample_rate,
+                        "bits_per_sample": cap.bits_per_sample,
+                        "num_samples": cap.num_samples,
+                        "lsb_overhead_bytes": cap.lsb_overhead_bytes,
+                        "lsb_total_capacity_bytes": cap.lsb_total_capacity_bytes,
+                        "lsb_max_payload_bytes": cap.lsb_max_payload_bytes,
+                        "lsb_max_payload_kib": (cap.lsb_max_payload_bytes as f64) / 1024.0,
+                        "chunk_mode_supported": cap.chunk_mode_supported,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!("{}", "=== [CARRIER CAPACITY] ===".bold());
+                    println!("  Target File:           {}", carrier.display());
+                    println!("  Carrier Type:          WAV Audio Carrier");
+                    println!(
+                        "  Audio Format:          {} (channels: {}, {} Hz, {} bps)",
+                        if cap.audio_format == 1 {
+                            "PCM"
+                        } else {
+                            "non-PCM"
+                        },
+                        cap.num_channels,
+                        cap.sample_rate,
+                        cap.bits_per_sample
+                    );
+                    println!("  Total Audio Samples:   {}", cap.num_samples);
+                    println!(
+                        "  Mode: LSB Capacity:    {} bytes usable payload ({:.2} KiB)",
+                        cap.lsb_max_payload_bytes,
+                        cap.lsb_max_payload_bytes as f64 / 1024.0
+                    );
+                    println!(
+                        "  Mode: Chunk Capacity:  Lossless RIFF metadata subchunk ('svLt', up to 4 GiB)"
+                    );
+                }
+            } else if raw_bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+                if json {
+                    let out = serde_json::json!({
+                        "carrier": carrier.display().to_string(),
+                        "carrier_type": "png",
+                        "mode": "chunk",
+                        "chunk_name": "svLt",
+                        "max_chunk_payload_bytes": 0x7fff_ffffusize,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!("{}", "=== [CARRIER CAPACITY] ===".bold());
+                    println!("  Target File:           {}", carrier.display());
+                    println!("  Carrier Type:          PNG Image Carrier");
+                    println!(
+                        "  Mode: Chunk Capacity:  Lossless private chunk ('svLt', up to 2 GiB)"
+                    );
+                    println!("  Max Chunk Size:        2,147,483,647 bytes");
+                }
+            } else {
+                anyhow::bail!(
+                    "unsupported carrier format for capacity estimation: {}",
+                    carrier.display()
+                );
+            }
+        }
+
         Commands::Inspect { input } => {
             let raw = fs::read(&input)
                 .with_context(|| format!("failed to read file: {}", input.display()))?;
-            let container = if raw.starts_with(b"\x89PNG\r\n\x1a\n") {
-                stego::extract_from_png(&raw)?
+            let (container, armor_meta) = if armor::is_armored(&raw) {
+                let text = std::str::from_utf8(&raw).context("armored file is not valid UTF-8")?;
+                let meta = armor::inspect_armor(text)?;
+                let dearmored = armor::dearmor_data(text)?;
+                (dearmored.to_vec(), Some(meta))
+            } else if raw.starts_with(b"\x89PNG\r\n\x1a\n") {
+                (stego::extract_from_png(&raw)?, None)
             } else if raw.len() >= 12 && &raw[0..4] == b"RIFF" && &raw[8..12] == b"WAVE" {
-                wav::extract_from_wav(&raw, wav::ExtractWavMode::Auto)?
+                (
+                    wav::extract_from_wav(&raw, wav::ExtractWavMode::Auto)?,
+                    None,
+                )
+            } else if raw.starts_with(b"BM") {
+                (bmp::extract_from_bmp(&raw)?, None)
             } else {
-                raw
+                (raw, None)
             };
-            let info = crypto::inspect(&container)?;
-            println!("container_version: {}", info.version);
-            println!("dpapi_bound:       {}", info.dpapi_bound);
-            println!("payload_bytes:     {}", info.payload_size);
-            println!("salt_hex:          {}", info.salt_hex);
-            if info.decoy_container {
-                println!("decoy_container:   true");
-                println!("container_type:    decoy (plausible deniability)");
+
+            if let Some(ref meta) = armor_meta {
+                println!("armored_container: true");
+                println!("armor_version:     {}", meta.version);
+                println!("armor_mode:        {}", meta.mode);
+                println!("data_stripes:      {}", meta.data_stripes);
+                println!("parity_stripes:    {}", meta.parity_stripes);
+                println!("original_length:   {}", meta.original_length);
+                println!("stripe_size:       {}", meta.stripe_size);
+                println!("payload_hash:      {}", meta.payload_hash);
+                let intact = meta.stripes.iter().filter(|s| s.valid).count();
+                println!("intact_stripes:    {}/{}", intact, meta.stripes.len());
+            }
+
+            if container.starts_with(b"SVLT") || armor_meta.is_none() {
+                let info = crypto::inspect(&container)?;
+                println!("container_version: {}", info.version);
+                println!("dpapi_bound:       {}", info.dpapi_bound);
+                println!("payload_bytes:     {}", info.payload_size);
+                println!("salt_hex:          {}", info.salt_hex);
+                if info.decoy_container {
+                    println!("decoy_container:   true");
+                    println!("container_type:    decoy (plausible deniability)");
+                }
             }
         }
         Commands::Shred { input, passes } => {
@@ -524,6 +794,163 @@ fn main() -> Result<()> {
                     .context("failed to write binary secret to stdout")?;
             }
         }
+        Commands::Armor {
+            input,
+            output,
+            data_stripes,
+            parity_stripes,
+            clip,
+            clip_ttl,
+        } => {
+            let raw = fs::read(&input)
+                .with_context(|| format!("failed to read input file: {}", input.display()))?;
+            let armored = armor::armor_data(&raw, data_stripes, parity_stripes)?;
+
+            if let Some(ref out_path) = output {
+                fs::write(out_path, &armored).with_context(|| {
+                    format!("failed to write armored file: {}", out_path.display())
+                })?;
+                println!(
+                    "{} armored {} bytes -> {} (stripes: {}+{})",
+                    "ok".green().bold(),
+                    raw.len(),
+                    out_path.display(),
+                    data_stripes,
+                    parity_stripes
+                );
+            } else if !clip {
+                print!("{armored}");
+            }
+
+            if clip {
+                let _ = clipboard_guard::guard_interactive(
+                    &armored,
+                    clip_ttl,
+                    Some("armored container (.svault.asc)"),
+                )?;
+            }
+        }
+        Commands::Dearmor {
+            input,
+            output,
+            clip,
+            clip_ttl,
+        } => {
+            let raw_text = fs::read_to_string(&input)
+                .with_context(|| format!("failed to read armored file: {}", input.display()))?;
+            let mut plain = armor::dearmor_data(&raw_text)?;
+
+            if let Some(ref out_path) = output {
+                fs::write(out_path, &*plain).with_context(|| {
+                    format!("failed to write dearmored file: {}", out_path.display())
+                })?;
+                println!(
+                    "{} dearmored {} bytes -> {}",
+                    "ok".green().bold(),
+                    plain.len(),
+                    out_path.display()
+                );
+            } else if !clip {
+                anyhow::bail!("either --output or --clip must be provided");
+            }
+
+            if clip {
+                match std::str::from_utf8(&plain) {
+                    Ok(text) => {
+                        let _ = clipboard_guard::guard_interactive(
+                            text,
+                            clip_ttl,
+                            Some("dearmored content"),
+                        )?;
+                    }
+                    Err(_) => {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&*plain);
+                        let _ = clipboard_guard::guard_interactive(
+                            &b64,
+                            clip_ttl,
+                            Some("dearmored binary (base64)"),
+                        )?;
+                    }
+                }
+            }
+            plain.zeroize();
+        }
+        Commands::Repair {
+            input,
+            output,
+            binary,
+            json,
+            clip,
+            clip_ttl,
+        } => {
+            let raw_text = fs::read_to_string(&input)
+                .with_context(|| format!("failed to read armored file: {}", input.display()))?;
+            let (repaired_armored, mut recovered_bytes, report) = armor::repair_armored(&raw_text)?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "{} repair completed: {} intact, {} reconstructed out of {} stripes",
+                    if report.success {
+                        "ok".green().bold()
+                    } else {
+                        "warning".yellow().bold()
+                    },
+                    report.intact_stripes,
+                    report.reconstructed_stripes,
+                    report.total_stripes
+                );
+            }
+
+            if let Some(ref out_path) = output {
+                if binary {
+                    fs::write(out_path, &*recovered_bytes).with_context(|| {
+                        format!("failed to write repaired binary: {}", out_path.display())
+                    })?;
+                } else {
+                    fs::write(out_path, &repaired_armored).with_context(|| {
+                        format!(
+                            "failed to write repaired armored file: {}",
+                            out_path.display()
+                        )
+                    })?;
+                }
+            }
+
+            if clip {
+                if binary {
+                    match std::str::from_utf8(&recovered_bytes) {
+                        Ok(text) => {
+                            let _ = clipboard_guard::guard_interactive(
+                                text,
+                                clip_ttl,
+                                Some("repaired content"),
+                            )?;
+                        }
+                        Err(_) => {
+                            use base64::Engine;
+                            let b64 =
+                                base64::engine::general_purpose::STANDARD.encode(&*recovered_bytes);
+                            let _ = clipboard_guard::guard_interactive(
+                                &b64,
+                                clip_ttl,
+                                Some("repaired binary (base64)"),
+                            )?;
+                        }
+                    }
+                } else {
+                    let _ = clipboard_guard::guard_interactive(
+                        &repaired_armored,
+                        clip_ttl,
+                        Some("repaired armored container"),
+                    )?;
+                }
+            }
+
+            recovered_bytes.zeroize();
+        }
         Commands::Audit {
             target,
             mut passphrase,
@@ -572,7 +999,9 @@ fn main() -> Result<()> {
                     || (raw_bytes.len() >= 12
                         && &raw_bytes[0..4] == b"RIFF"
                         && &raw_bytes[8..12] == b"WAVE")
-                    || raw_bytes.starts_with(b"SVLT");
+                    || raw_bytes.starts_with(b"BM")
+                    || raw_bytes.starts_with(b"SVLT")
+                    || armor::is_armored(&raw_bytes);
 
                 if is_known_carrier
                     || raw_bytes.contains(&0)
@@ -1175,7 +1604,11 @@ fn print_carrier_audit(rep: &audit::FileAuditReport) {
         println!("  Stego Chunk ('svLt'):  present (active)");
     }
     if rep.details.stego_lsb_present {
-        println!("  Stego PCM LSB:         present (active)");
+        if rep.carrier_type == audit::CarrierType::BmpImage {
+            println!("  Stego Pixel LSB:       present (active)");
+        } else {
+            println!("  Stego PCM LSB:         present (active)");
+        }
     }
     if rep.details.trailing_bytes > 0 {
         println!(

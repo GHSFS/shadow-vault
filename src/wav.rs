@@ -113,6 +113,56 @@ pub fn extract_from_wav(wav_bytes: &[u8], mode: ExtractWavMode) -> Result<Vec<u8
     }
 }
 
+/// Steganographic storage capacity evaluation for a WAV audio carrier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WavCapacity {
+    pub audio_format: u16,
+    pub num_channels: u16,
+    pub sample_rate: u32,
+    pub bits_per_sample: u16,
+    pub num_samples: usize,
+    pub lsb_total_capacity_bytes: usize,
+    pub lsb_max_payload_bytes: usize,
+    pub lsb_overhead_bytes: usize,
+    pub chunk_mode_supported: bool,
+}
+
+impl std::fmt::Display for WavCapacity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "WAV audio (format: {}, channels: {}, {} Hz, {} bps, {} samples, LSB payload capacity: {} bytes / {:.2} KiB)",
+            self.audio_format,
+            self.num_channels,
+            self.sample_rate,
+            self.bits_per_sample,
+            self.num_samples,
+            self.lsb_max_payload_bytes,
+            self.lsb_max_payload_bytes as f64 / 1024.0
+        )
+    }
+}
+
+/// Calculate steganographic data storage capacity for a WAV audio carrier.
+pub fn get_wav_capacity(wav_bytes: &[u8]) -> Result<WavCapacity> {
+    let pcm = parse_wav_pcm_info(wav_bytes)?;
+    let num_samples = pcm.data_len / 2;
+    let lsb_total_capacity_bytes = num_samples / 8;
+    let lsb_max_payload_bytes = lsb_total_capacity_bytes.saturating_sub(LSB_OVERHEAD_BYTES);
+
+    Ok(WavCapacity {
+        audio_format: pcm.audio_format,
+        num_channels: pcm.num_channels,
+        sample_rate: pcm.sample_rate,
+        bits_per_sample: pcm.bits_per_sample,
+        num_samples,
+        lsb_total_capacity_bytes,
+        lsb_max_payload_bytes,
+        lsb_overhead_bytes: LSB_OVERHEAD_BYTES,
+        chunk_mode_supported: true,
+    })
+}
+
 fn is_chunk_corruption_error(err: &Error) -> bool {
     match err {
         Error::Format(msg) => {

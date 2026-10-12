@@ -173,6 +173,8 @@ pub struct PassphraseAuditReport {
 pub enum CarrierType {
     PngImage,
     WavAudio,
+    BmpImage,
+    ArmoredAscii,
     SvaultContainer,
     TextFile,
     BinaryData,
@@ -183,6 +185,8 @@ impl std::fmt::Display for CarrierType {
         match self {
             Self::PngImage => write!(f, "PNG Image Carrier"),
             Self::WavAudio => write!(f, "WAV Audio Carrier"),
+            Self::BmpImage => write!(f, "BMP Image Carrier"),
+            Self::ArmoredAscii => write!(f, "ASCII Armored Container (.svault.asc)"),
             Self::SvaultContainer => write!(f, "ShadowVault Encrypted Container"),
             Self::TextFile => write!(f, "Plaintext / Key File"),
             Self::BinaryData => write!(f, "Raw Binary Data"),
@@ -534,6 +538,10 @@ pub fn audit_carrier_bytes(name: &str, data: &[u8]) -> Result<FileAuditReport> {
         audit_png_carrier(name, data, shannon, chi_sq)
     } else if data.len() >= 12 && &data[0..4] == RIFF_MAGIC && &data[8..12] == WAVE_MAGIC {
         audit_wav_carrier(name, data, shannon, chi_sq)
+    } else if data.starts_with(crate::bmp::BMP_MAGIC) {
+        audit_bmp_carrier(name, data, shannon, chi_sq)
+    } else if crate::armor::is_armored(data) {
+        audit_armored_carrier(name, data, shannon, chi_sq)
     } else if data.starts_with(SVLT_CONTAINER_MAGIC) {
         audit_svault_container(name, data, shannon, chi_sq)
     } else if is_likely_text(data) {
@@ -1092,6 +1100,308 @@ fn audit_wav_carrier(
             trailing_bytes,
             total_chunks_or_subchunks: subchunk_count,
             salt_hex,
+        },
+        anomalies,
+        findings,
+        recommendations,
+    })
+}
+
+fn audit_bmp_carrier(
+    name: &str,
+    data: &[u8],
+    shannon: f64,
+    chi_sq: f64,
+) -> Result<FileAuditReport> {
+    let mut anomalies = Vec::new();
+    let mut findings = Vec::new();
+    let mut recommendations = Vec::new();
+
+    let mut container_version = None;
+    let mut dpapi_bound = None;
+    let mut decoy_container = None;
+    let mut payload_bytes = None;
+    let mut stego_lsb_present = false;
+    let mut trailing_bytes = 0usize;
+    let mut salt_hex = None;
+
+    if data.len() < 54 {
+        anomalies
+            .push("Truncated BMP carrier (less than 54 bytes for file and DIB headers)".into());
+        return Ok(FileAuditReport {
+            file_path: name.to_string(),
+            file_size: data.len(),
+            carrier_type: CarrierType::BmpImage,
+            shannon_entropy: shannon,
+            chi_square: chi_sq,
+            verdict: CarrierVerdict::SuspiciousAnomaly,
+            details: CarrierDetails {
+                container_version: None,
+                dpapi_bound: None,
+                decoy_container: None,
+                payload_bytes: None,
+                stego_chunk_present: false,
+                stego_lsb_present: false,
+                trailing_bytes: 0,
+                total_chunks_or_subchunks: 0,
+                salt_hex: None,
+            },
+            anomalies,
+            findings,
+            recommendations,
+        });
+    }
+
+    match crate::bmp::parse_bmp_header(data) {
+        Err(e) => {
+            anomalies.push(format!("BMP header validation failed: {e}"));
+        }
+        Ok(hdr) => {
+            findings.push(format!(
+                "BMP 24-bit image dimensions: {}x{} ({} pixels, bpp: 24, stride: {} bytes, padding: {} bytes/row)",
+                hdr.width,
+                hdr.height,
+                (hdr.width as usize) * (hdr.height as usize),
+                hdr.row_stride,
+                hdr.row_padding
+            ));
+
+            let expected_len = hdr.data_offset + hdr.row_stride * (hdr.height as usize);
+            if data.len() > expected_len {
+                let diff = data.len() - expected_len;
+                trailing_bytes = diff;
+                anomalies.push(format!(
+                    "Found {diff} trailing bytes beyond declared BMP pixel data (potential EOF append anomaly)"
+                ));
+            }
+
+            // Inspect LSB stream if carrier has sufficient channels
+            if hdr.channel_bytes >= 96 {
+                match crate::bmp::extract_from_bmp(data) {
+                    Ok(payload) => {
+                        stego_lsb_present = true;
+                        payload_bytes = Some(payload.len());
+                        findings.push(format!(
+                            "Detected 24-bit BMP pixel LSB stego stream with valid 'svLt' magic header and verified CRC-32 ({} bytes)",
+                            payload.len()
+                        ));
+
+                        if let Some((v, dp, dec, s_hex)) = audit_embedded_container(
+                            "24-bit BMP pixel LSB stream",
+                            &payload,
+                            &mut anomalies,
+                            &mut findings,
+                        ) {
+                            container_version = Some(v);
+                            dpapi_bound = Some(dp);
+                            decoy_container = Some(dec);
+                            salt_hex = Some(s_hex);
+                        }
+                    }
+                    Err(crate::error::Error::Format(msg)) => {
+                        if msg.contains("CRC-32 mismatch")
+                            || msg.contains("exceeds carrier capacity")
+                            || msg.contains("truncated")
+                        {
+                            stego_lsb_present = true;
+                            anomalies.push(format!("Corrupted BMP pixel LSB stego stream: {msg}"));
+                        }
+                    }
+                    Err(e) => {
+                        anomalies.push(format!("Error reading BMP LSB stream: {e}"));
+                    }
+                }
+            }
+        }
+    }
+
+    let verdict = if !anomalies.is_empty() {
+        CarrierVerdict::SuspiciousAnomaly
+    } else if stego_lsb_present {
+        CarrierVerdict::StegoCarrierDetected
+    } else {
+        CarrierVerdict::CleanCarrier
+    };
+
+    if stego_lsb_present {
+        recommendations.push(
+            "Carrier contains an active ShadowVault container; extract with 'svault extract-bmp'"
+                .into(),
+        );
+    } else if verdict == CarrierVerdict::CleanCarrier {
+        findings.push(
+            "Valid 24-bit BMP image. No steganographic signatures detected in pixel data.".into(),
+        );
+    }
+
+    Ok(FileAuditReport {
+        file_path: name.to_string(),
+        file_size: data.len(),
+        carrier_type: CarrierType::BmpImage,
+        shannon_entropy: shannon,
+        chi_square: chi_sq,
+        verdict,
+        details: CarrierDetails {
+            container_version,
+            dpapi_bound,
+            decoy_container,
+            payload_bytes,
+            stego_chunk_present: false,
+            stego_lsb_present,
+            trailing_bytes,
+            total_chunks_or_subchunks: 1,
+            salt_hex,
+        },
+        anomalies,
+        findings,
+        recommendations,
+    })
+}
+
+fn audit_armored_carrier(
+    name: &str,
+    data: &[u8],
+    shannon: f64,
+    chi_sq: f64,
+) -> Result<FileAuditReport> {
+    let mut anomalies = Vec::new();
+    let mut findings = Vec::new();
+    let mut recommendations = Vec::new();
+
+    let text = match std::str::from_utf8(data) {
+        Ok(t) => t,
+        Err(_) => {
+            return Err(Error::Format(
+                "armored carrier data is not valid UTF-8".into(),
+            ));
+        }
+    };
+
+    let meta = match crate::armor::inspect_armor(text) {
+        Ok(m) => m,
+        Err(e) => {
+            anomalies.push(format!("Armored container layout or header failure: {e}"));
+            return Ok(FileAuditReport {
+                file_path: name.to_string(),
+                file_size: data.len(),
+                carrier_type: CarrierType::ArmoredAscii,
+                shannon_entropy: shannon,
+                chi_square: chi_sq,
+                verdict: CarrierVerdict::SuspiciousAnomaly,
+                details: CarrierDetails {
+                    container_version: None,
+                    dpapi_bound: None,
+                    decoy_container: None,
+                    payload_bytes: None,
+                    stego_chunk_present: false,
+                    stego_lsb_present: false,
+                    trailing_bytes: 0,
+                    total_chunks_or_subchunks: 0,
+                    salt_hex: None,
+                },
+                anomalies,
+                findings,
+                recommendations: vec!["Ensure armored file is not corrupted or truncated".into()],
+            });
+        }
+    };
+
+    findings.push("Detected ASCII Armored container with Cauchy MDS Reed-Solomon parity".into());
+    findings.push(format!("Armor version: v{}", meta.version));
+    findings.push(format!("Error correction mode: {}", meta.mode));
+    findings.push(format!(
+        "Data stripes: {}, Parity stripes: {}, Total stripes: {}",
+        meta.data_stripes,
+        meta.parity_stripes,
+        meta.stripes.len()
+    ));
+    findings.push(format!(
+        "Original payload size: {} bytes, stripe size: {} bytes",
+        meta.original_length, meta.stripe_size
+    ));
+    findings.push(format!("Payload SHA-256 digest: {}", meta.payload_hash));
+
+    let intact_count = meta.stripes.iter().filter(|s| s.valid).count();
+    let corrupted_count = meta.stripes.len().saturating_sub(intact_count);
+
+    for s in &meta.stripes {
+        if !s.valid {
+            anomalies.push(format!(
+                "Stripe #{} ({}) CRC-32 checksum mismatch or invalid payload",
+                s.index,
+                if s.is_parity { "parity" } else { "data" }
+            ));
+        }
+    }
+
+    let mut inner_version = None;
+    let mut inner_dpapi = None;
+    let mut inner_decoy = None;
+    let mut inner_salt = None;
+
+    let verdict = if corrupted_count == 0 {
+        findings.push(format!(
+            "All {} stripes intact with valid CRC-32 checksums",
+            meta.stripes.len()
+        ));
+        if let Ok(recovered) = crate::armor::dearmor_data(text) {
+            if recovered.starts_with(SVLT_CONTAINER_MAGIC) {
+                if let Some((v, dp, dec, s_hex)) = audit_embedded_container(
+                    "armored payload",
+                    &recovered,
+                    &mut anomalies,
+                    &mut findings,
+                ) {
+                    inner_version = Some(v);
+                    inner_dpapi = Some(dp);
+                    inner_decoy = Some(dec);
+                    inner_salt = Some(s_hex);
+                }
+            } else {
+                findings.push("Armored payload contains arbitrary binary/secret data".into());
+            }
+        }
+        CarrierVerdict::EncryptedContainer
+    } else if intact_count >= meta.data_stripes as usize {
+        findings.push(format!(
+            "Recoverable error: {}/{} stripes intact (requires at least {} data stripes)",
+            intact_count,
+            meta.stripes.len(),
+            meta.data_stripes
+        ));
+        recommendations.push(format!(
+            "Execute 'svault repair -i {}' to reconstruct corrupted stripes using Cauchy RS parity",
+            name
+        ));
+        CarrierVerdict::SuspiciousAnomaly
+    } else {
+        anomalies.push(format!(
+            "Unrecoverable corruption: only {} intact stripes found, need at least {} (parity exhausted)",
+            intact_count, meta.data_stripes
+        ));
+        recommendations.push(
+            "Backup restoration required: corruption exceeds parity correction threshold".into(),
+        );
+        CarrierVerdict::SuspiciousAnomaly
+    };
+
+    Ok(FileAuditReport {
+        file_path: name.to_string(),
+        file_size: data.len(),
+        carrier_type: CarrierType::ArmoredAscii,
+        shannon_entropy: shannon,
+        chi_square: chi_sq,
+        verdict,
+        details: CarrierDetails {
+            container_version: inner_version,
+            dpapi_bound: inner_dpapi,
+            decoy_container: inner_decoy,
+            payload_bytes: Some(meta.original_length),
+            stego_chunk_present: false,
+            stego_lsb_present: false,
+            trailing_bytes: 0,
+            total_chunks_or_subchunks: meta.stripes.len(),
+            salt_hex: inner_salt,
         },
         anomalies,
         findings,
@@ -2549,5 +2859,147 @@ mod tests {
 
         let rep_zero = audit_passphrase("0plm2026");
         assert!(rep_zero.has_keyboard_walk);
+    }
+
+    #[test]
+    fn audit_bmp_clean_and_stego_carrier() {
+        let clean_bmp = crate::bmp::create_minimal_bmp(64, 64);
+        let rep_clean = audit_carrier_bytes("clean.bmp", &clean_bmp).unwrap();
+        assert_eq!(rep_clean.carrier_type, CarrierType::BmpImage);
+        assert_eq!(rep_clean.verdict, CarrierVerdict::CleanCarrier);
+        assert!(!rep_clean.details.stego_lsb_present);
+
+        let secret = b"bmp-audit-payload-test";
+        let sealed = crate::crypto::seal(secret, "audit-pass", false).unwrap();
+        let stego_bmp = crate::bmp::embed_in_bmp(&clean_bmp, &sealed).unwrap();
+
+        let rep_stego = audit_carrier_bytes("stego.bmp", &stego_bmp).unwrap();
+        assert_eq!(rep_stego.carrier_type, CarrierType::BmpImage);
+        assert_eq!(rep_stego.verdict, CarrierVerdict::StegoCarrierDetected);
+        assert!(rep_stego.details.stego_lsb_present);
+        assert_eq!(rep_stego.details.payload_bytes, Some(sealed.len()));
+        assert_eq!(rep_stego.details.container_version, Some(1));
+    }
+
+    #[test]
+    fn audit_bmp_corrupted_crc_anomaly() {
+        let clean_bmp = crate::bmp::create_minimal_bmp(40, 40);
+        let secret = b"secret-to-corrupt";
+        let mut stego_bmp = crate::bmp::embed_in_bmp(&clean_bmp, secret).unwrap();
+
+        // Corrupt one bit in the payload stream
+        let hdr = crate::bmp::parse_bmp_header(&stego_bmp).unwrap();
+        stego_bmp[hdr.data_offset + 80] ^= 1;
+
+        let rep = audit_carrier_bytes("corrupted.bmp", &stego_bmp).unwrap();
+        assert_eq!(rep.verdict, CarrierVerdict::SuspiciousAnomaly);
+        assert!(rep
+            .anomalies
+            .iter()
+            .any(|a| a.contains("Corrupted BMP pixel LSB stego stream")
+                && a.contains("CRC-32 mismatch")));
+    }
+
+    #[test]
+    fn audit_bmp_trailing_bytes_anomaly() {
+        let mut bmp = crate::bmp::create_minimal_bmp(20, 20);
+        bmp.extend_from_slice(b"EXTRA_APPENDED_TRAILING_DATA_AFTER_BMP_PIXELS");
+
+        let rep = audit_carrier_bytes("trailing.bmp", &bmp).unwrap();
+        assert_eq!(rep.verdict, CarrierVerdict::SuspiciousAnomaly);
+        assert!(rep.details.trailing_bytes > 0);
+        assert!(rep
+            .anomalies
+            .iter()
+            .any(|a| a.contains("trailing bytes beyond declared BMP pixel data")));
+    }
+
+    #[test]
+    fn audit_bmp_truncated_header_anomaly() {
+        let truncated = b"BMshort";
+        let rep = audit_carrier_bytes("short.bmp", truncated).unwrap();
+        assert_eq!(rep.carrier_type, CarrierType::BmpImage);
+        assert_eq!(rep.verdict, CarrierVerdict::SuspiciousAnomaly);
+        assert_eq!(rep.details.total_chunks_or_subchunks, 0);
+        assert!(rep
+            .anomalies
+            .iter()
+            .any(|a| a.contains("Truncated BMP carrier")));
+    }
+
+    #[test]
+    fn audit_bmp_v4_header_clean_and_stego() {
+        let clean_v4 = crate::bmp::create_test_bmp_with_dib_size(32, 32, 108);
+        let rep_clean = audit_carrier_bytes("clean_v4.bmp", &clean_v4).unwrap();
+        assert_eq!(rep_clean.carrier_type, CarrierType::BmpImage);
+        assert_eq!(rep_clean.verdict, CarrierVerdict::CleanCarrier);
+        assert!(!rep_clean.details.stego_lsb_present);
+
+        let secret = b"bmp-v4-audit-test";
+        let sealed = crate::crypto::seal(secret, "audit-v4-pass", false).unwrap();
+        let stego_v4 = crate::bmp::embed_in_bmp(&clean_v4, &sealed).unwrap();
+
+        let rep_stego = audit_carrier_bytes("stego_v4.bmp", &stego_v4).unwrap();
+        assert_eq!(rep_stego.carrier_type, CarrierType::BmpImage);
+        assert_eq!(rep_stego.verdict, CarrierVerdict::StegoCarrierDetected);
+        assert!(rep_stego.details.stego_lsb_present);
+        assert_eq!(rep_stego.details.payload_bytes, Some(sealed.len()));
+    }
+
+    #[test]
+    fn audit_armored_carrier_clean() {
+        let secret = b"Secret payload to be armored and audited";
+        let sealed = crate::crypto::seal(secret, "armor-pass", false).unwrap();
+        let armored = crate::armor::armor_data(&sealed, 4, 2).unwrap();
+
+        let rep = audit_carrier_bytes("vault.svault.asc", armored.as_bytes()).unwrap();
+        assert_eq!(rep.carrier_type, CarrierType::ArmoredAscii);
+        assert_eq!(rep.verdict, CarrierVerdict::EncryptedContainer);
+        assert_eq!(rep.details.container_version, Some(1));
+        assert_eq!(rep.details.payload_bytes, Some(sealed.len()));
+        assert_eq!(rep.details.total_chunks_or_subchunks, 6);
+        assert!(rep.anomalies.is_empty());
+        assert!(rep
+            .findings
+            .iter()
+            .any(|f| f.contains("All 6 stripes intact")));
+    }
+
+    #[test]
+    fn audit_armored_carrier_corrupted_anomaly() {
+        let secret = b"Corrupted armor audit test vector";
+        let armored = crate::armor::armor_data(secret, 4, 2).unwrap();
+
+        // Corrupt Stripe 0 payload
+        let mut corrupted = String::new();
+        let mut in_stripe_0 = false;
+        for line in armored.lines() {
+            if line.contains("=== STRIPE 0 (DATA)") {
+                in_stripe_0 = true;
+                corrupted.push_str(line);
+                corrupted.push('\n');
+            } else if in_stripe_0 && line.starts_with("=== STRIPE") {
+                in_stripe_0 = false;
+                corrupted.push_str(line);
+                corrupted.push('\n');
+            } else if in_stripe_0 && !line.is_empty() {
+                corrupted.push_str("BADBASE64GARBAGE\n");
+            } else {
+                corrupted.push_str(line);
+                corrupted.push('\n');
+            }
+        }
+
+        let rep = audit_carrier_bytes("corrupted.svault.asc", corrupted.as_bytes()).unwrap();
+        assert_eq!(rep.carrier_type, CarrierType::ArmoredAscii);
+        assert_eq!(rep.verdict, CarrierVerdict::SuspiciousAnomaly);
+        assert!(rep
+            .anomalies
+            .iter()
+            .any(|a| a.contains("Stripe #0 (data) CRC-32 checksum mismatch")));
+        assert!(rep
+            .recommendations
+            .iter()
+            .any(|r| r.contains("svault repair")));
     }
 }

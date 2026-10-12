@@ -90,9 +90,9 @@ pub enum Commands {
         #[arg(short, long)]
         input: PathBuf,
 
-        /// Output plaintext file path
-        #[arg(short, long)]
-        output: PathBuf,
+        /// Output plaintext file path (optional when --clip is provided)
+        #[arg(short, long, required_unless_present = "clip")]
+        output: Option<PathBuf>,
 
         /// Decryption passphrase (unlocks either primary or decoy automatically)
         #[arg(short, long)]
@@ -118,9 +118,9 @@ pub enum Commands {
         #[arg(short, long)]
         input: PathBuf,
 
-        /// Output plaintext file path
-        #[arg(short, long)]
-        output: PathBuf,
+        /// Output plaintext file path (optional when --clip is provided)
+        #[arg(short, long, required_unless_present = "clip")]
+        output: Option<PathBuf>,
 
         /// Decryption passphrase (unlocks either primary or decoy automatically)
         #[arg(short, long)]
@@ -182,9 +182,9 @@ pub enum Commands {
         #[arg(short, long)]
         carrier: PathBuf,
 
-        /// Output file path for extracted secret
-        #[arg(short, long)]
-        output: PathBuf,
+        /// Output file path for extracted secret (optional when --clip is provided)
+        #[arg(short, long, required_unless_present = "clip")]
+        output: Option<PathBuf>,
 
         /// Decryption passphrase (unlocks either primary or decoy automatically)
         #[arg(short, long)]
@@ -254,9 +254,9 @@ pub enum Commands {
         #[arg(short, long)]
         carrier: PathBuf,
 
-        /// Output file path for extracted secret
-        #[arg(short, long)]
-        output: PathBuf,
+        /// Output file path for extracted secret (optional when --clip is provided)
+        #[arg(short, long, required_unless_present = "clip")]
+        output: Option<PathBuf>,
 
         /// Decryption passphrase (unlocks either primary or decoy automatically)
         #[arg(short, long)]
@@ -283,9 +283,85 @@ pub enum Commands {
         clip_ttl: u64,
     },
 
+    /// Encrypt and hide a secret file inside a 24-bit uncompressed BMP carrier image
+    #[command(name = "embed-bmp", visible_alias = "hide-bmp")]
+    EmbedBmp {
+        /// Carrier BMP image path
+        #[arg(short, long)]
+        carrier: PathBuf,
+
+        /// Secret file to encrypt and embed
+        #[arg(short, long)]
+        secret: PathBuf,
+
+        /// Output stego BMP image path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Encryption passphrase
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Optional decoy file to create a plausible deniability container
+        #[arg(short = 'd', long = "decoy", requires = "decoy_passphrase")]
+        decoy: Option<PathBuf>,
+
+        /// Decoy passphrase when --decoy is specified
+        #[arg(long = "decoy-passphrase", requires = "decoy")]
+        decoy_passphrase: Option<String>,
+
+        /// Explicit random padding bytes for size obfuscation
+        #[arg(long, default_value_t = 0)]
+        padding: usize,
+
+        /// Bind hidden payload to the current Windows user/machine via DPAPI
+        #[arg(long)]
+        dpapi: bool,
+    },
+
+    /// Extract and decrypt a secret file from a stego BMP image
+    #[command(name = "extract-bmp", visible_alias = "unhide-bmp")]
+    ExtractBmp {
+        /// Input stego BMP image path
+        #[arg(short, long)]
+        carrier: PathBuf,
+
+        /// Output file path for extracted secret (optional when --clip is provided)
+        #[arg(short, long, required_unless_present = "clip")]
+        output: Option<PathBuf>,
+
+        /// Decryption passphrase (unlocks either primary or decoy automatically)
+        #[arg(short, long)]
+        passphrase: Option<String>,
+
+        /// Explicit decoy passphrase
+        #[arg(long = "decoy-passphrase")]
+        decoy_passphrase: Option<String>,
+
+        /// Copy decrypted plaintext to Windows clipboard with auto-expiring guard
+        #[arg(long = "clip")]
+        clip: bool,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
+    },
+
+    /// Estimate and display steganographic data storage capacity for a carrier file
+    #[command(name = "capacity", visible_alias = "cap")]
+    Capacity {
+        /// Carrier file path (.bmp, .wav, or .png)
+        #[arg(value_name = "CARRIER")]
+        carrier: PathBuf,
+
+        /// Output carrier capacity report in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Inspect a .svault container or stego carrier header without decrypting
     Inspect {
-        /// Target .svault, .png, or .wav file
+        /// Target .svault, .png, .wav, or .bmp file
         input: PathBuf,
     },
 
@@ -353,6 +429,86 @@ pub enum Commands {
         /// Output recovery result in structured JSON format
         #[arg(long)]
         json: bool,
+    },
+
+    /// Armor a .svault container or secret file with Cauchy MDS Reed-Solomon parity stripes (.svault.asc)
+    #[command(name = "armor", visible_alias = "asc")]
+    Armor {
+        /// Input file to armor (.svault container or binary file)
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Output armored file path (.svault.asc, defaults to stdout if omitted)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Number of data stripes K (default: 4, 1..=128)
+        #[arg(short = 'k', long = "data-stripes", default_value_t = 4)]
+        data_stripes: u8,
+
+        /// Number of Cauchy MDS parity stripes M (default: 2, 1..=128)
+        #[arg(short = 'm', long = "parity-stripes", default_value_t = 2)]
+        parity_stripes: u8,
+
+        /// Copy armored text to Windows clipboard with auto-expiring guard
+        #[arg(long = "clip")]
+        clip: bool,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
+    },
+
+    /// Decode an ASCII armored file (.svault.asc) back to the original container or secret file
+    #[command(
+        name = "dearmor",
+        visible_alias = "de-armor",
+        visible_alias = "unarmor"
+    )]
+    Dearmor {
+        /// Input armored file (.svault.asc)
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Output binary file path (required unless --clip is specified)
+        #[arg(short, long, required_unless_present = "clip")]
+        output: Option<PathBuf>,
+
+        /// Copy dearmored data to Windows clipboard with auto-expiring guard
+        #[arg(long = "clip")]
+        clip: bool,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
+    },
+
+    /// Inspect and repair a corrupted .svault.asc armored file using Cauchy Reed-Solomon parity
+    #[command(name = "repair", visible_alias = "fix")]
+    Repair {
+        /// Corrupted armored file path (.svault.asc)
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Output repaired file path (.svault.asc or binary if --binary is set)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Output repaired container directly as binary instead of re-armoring
+        #[arg(long = "binary", visible_alias = "raw")]
+        binary: bool,
+
+        /// Output repair diagnostic report in structured JSON format
+        #[arg(long)]
+        json: bool,
+
+        /// Copy repaired content to Windows clipboard with auto-expiring guard
+        #[arg(long = "clip")]
+        clip: bool,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
     },
 
     /// Audit passphrase strength, Shannon entropy, and steganography carrier anomalies

@@ -5,6 +5,46 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-10-12
+
+### Added
+- Cauchy MDS Reed-Solomon Error-Correcting Armor Engine (`src/armor.rs`).
+- Finite Field arithmetic over $\text{GF}(256)$ with Rijndael polynomial $x^8 + x^4 + x^3 + x + 1$ ($\mathtt{0x11B}$).
+- Maximum Distance Separable (MDS) code generator matrix $[I_K; A]$ with Cauchy matrix entries $A_{i, j} = \frac{1}{(K + i) \oplus j}$, guaranteeing that ANY $K$ intact shards out of $K + M$ total stripes uniquely and completely reconstruct all $K$ original data shards.
+- Gaussian elimination in $\text{GF}(256)$ with partial pivoting for exact matrix inversion.
+- ASCII armored export/import format (`.svault.asc`) with per-stripe CRC-32 integrity checksums, overall SHA-256 digest binding, and 64-character line-wrapped Base64 encoding.
+- Automated corruption detection, erasure isolation, and self-healing repair (`repair_armored`) with detailed JSON diagnostic reporting.
+- CLI subcommands:
+  - `svault armor <flags>` (visible alias: `asc`): Convert a `.svault` container or secret file into an error-correcting ASCII armored file (`.svault.asc`) with configurable data stripes (`-k`) and Cauchy MDS parity stripes (`-m`), plus auto-expiring clipboard guard (`--clip`).
+  - `svault dearmor <flags>` (visible aliases: `de-armor`, `unarmor`): Decode `.svault.asc` back into original container or secret file, with transparent Cauchy RS erasure reconstruction if corrupted stripes are detected.
+  - `svault repair <flags>` (visible alias: `fix`): Inspect and repair corrupted `.svault.asc` files, regenerating a clean armored document or exporting directly to binary with `--binary`, plus `--json` diagnostic reporting.
+- Forensics & Steganalysis Integration:
+  - Auto-detection of armored files in `svault inspect <target>`, extracting and displaying armor stripe statistics and inner container metadata.
+  - Auto-detection of armored files in `svault audit <target>`, auditing stripe CRC-32 checksums, anomaly detection, and reconstruction recommendations.
+- Auto-expiring Clipboard Guard Integration:
+  - Added `--clip` and `--clip-ttl <seconds>` flags to `armor`, `dearmor`, and `repair`.
+- Proactive memory zeroization (`Zeroize` / `Zeroizing`) on sensitive decrypted and reconstructed secret buffers.
+- Comprehensive test coverage: 165 unit tests and 69 integration tests (234 total tests, 100% pass).
+
+## [0.8.0] - 2026-10-12
+
+### Added
+- 24-bit Uncompressed Windows BMP Pixel LSB Steganography Engine (`src/bmp.rs`).
+- Pure Rust implementation with zero external image codec dependencies.
+- Strict 4-byte row padding preservation: calculates exact row stride and modulates only R, G, B color channels while leaving all padding bytes byte-for-byte untouched.
+- 12-byte stego envelope: `[magic "svLt": 4B][len: 4B LE][payload: NB][crc32: 4B LE]`.
+- Constant-time CRC-32 validation (`constant_time_eq_4`) protecting against checksum timing attacks.
+- Dual DIB orientation support: bottom-up standard bitmaps (positive height) and top-down bitmaps (negative height).
+- Universal carrier capacity estimation engine and CLI command: `svault capacity <carrier>` (visible alias: `cap`) with `--json` support across BMP, WAV, and PNG carriers.
+- CLI subcommands:
+  - `svault embed-bmp <flags>` (visible alias: `hide-bmp`): Encrypt and conceal sensitive files inside 24-bit BMP carriers, with plausible deniability decoy support (`--decoy`, `--decoy-passphrase`), custom padding (`--padding`), and Windows DPAPI hardware binding (`--dpapi`).
+  - `svault extract-bmp <flags>` (visible alias: `unhide-bmp`): Extract and decrypt hidden payloads from 24-bit BMP carriers, with optional auto-expiring clipboard integration (`--clip`, `--clip-ttl`).
+  - `svault capacity <carrier>`: Universal capacity reporting in text or structured JSON.
+- Stego carrier detection and forensic inspection:
+  - Wired BMP detection and payload extraction into `svault inspect <target>`.
+  - Wired BMP carrier detection and steganalysis anomaly checking into `svault audit <target>`.
+- Comprehensive test coverage: 143 unit tests and 57 integration tests (200 total tests, 100% pass).
+
 ## [0.7.0] - 2026-10-12
 
 ### Added

@@ -14,14 +14,14 @@ fn cli_version_and_help_work() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.7.0"));
+        .stdout(predicate::str::contains("svault 0.9.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
         .arg("-V")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.7.0"));
+        .stdout(predicate::str::contains("svault 0.9.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
@@ -37,8 +37,14 @@ fn cli_version_and_help_work() {
         .stdout(predicate::str::contains("extract"))
         .stdout(predicate::str::contains("embed-wav"))
         .stdout(predicate::str::contains("extract-wav"))
+        .stdout(predicate::str::contains("embed-bmp"))
+        .stdout(predicate::str::contains("extract-bmp"))
+        .stdout(predicate::str::contains("capacity"))
         .stdout(predicate::str::contains("split"))
         .stdout(predicate::str::contains("combine"))
+        .stdout(predicate::str::contains("armor"))
+        .stdout(predicate::str::contains("dearmor"))
+        .stdout(predicate::str::contains("repair"))
         .stdout(predicate::str::contains("inspect"))
         .stdout(predicate::str::contains("audit"))
         .stdout(predicate::str::contains("totp"))
@@ -113,6 +119,55 @@ fn cli_version_and_help_work() {
         .assert()
         .success()
         .stdout(predicate::str::contains("extract-wav"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["embed-bmp", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("embed-bmp"))
+        .stdout(predicate::str::contains("--carrier"))
+        .stdout(predicate::str::contains("--secret"))
+        .stdout(predicate::str::contains("--output"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["embed-bmp", "-h"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("embed-bmp"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["extract-bmp", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("extract-bmp"))
+        .stdout(predicate::str::contains("--carrier"))
+        .stdout(predicate::str::contains("--output"))
+        .stdout(predicate::str::contains("--clip"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["extract-bmp", "-h"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("extract-bmp"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("capacity"))
+        .stdout(predicate::str::contains("--json"));
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", "-h"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("capacity"));
 }
 
 #[test]
@@ -3027,10 +3082,1280 @@ fn cli_clipboard_guard_integration_suite() {
         .success()
         .stdout(predicate::str::contains(dec_secret));
 
-    // Clean up
+    // 7. Extract-BMP with --clip flag
+    let bmp_carrier_path = dir.path().join("carrier.bmp");
+    let bmp_secret_path = dir.path().join("bmp_secret.txt");
+    let bmp_stego_path = dir.path().join("bmp_stego.bmp");
+    let bmp_out_path = dir.path().join("bmp_out.txt");
+    let bmp_clip_secret = "BmpClipboardSecretKey2026!";
+    let bmp_pass = "bmp-clip-pass-123";
+
+    fs::write(&bmp_carrier_path, generate_24bit_bmp(64, 64)).unwrap();
+    fs::write(&bmp_secret_path, bmp_clip_secret).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-bmp",
+            "-c",
+            bmp_carrier_path.to_str().unwrap(),
+            "-s",
+            bmp_secret_path.to_str().unwrap(),
+            "-o",
+            bmp_stego_path.to_str().unwrap(),
+            "-p",
+            bmp_pass,
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-bmp",
+            "-c",
+            bmp_stego_path.to_str().unwrap(),
+            "-o",
+            bmp_out_path.to_str().unwrap(),
+            "-p",
+            bmp_pass,
+            "--clip",
+            "--clip-ttl",
+            "0",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "paste"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(bmp_clip_secret));
+
+    // 8. Extract-BMP direct to clipboard without --output (zero disk write)
+    let direct_secret = "direct-to-clipboard-token-bmp-2026!";
+    let direct_secret_path = dir.path().join("bmp_direct_secret.txt");
+    let direct_stego_path = dir.path().join("bmp_direct_stego.bmp");
+    fs::write(&direct_secret_path, direct_secret).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-bmp",
+            "-c",
+            bmp_carrier_path.to_str().unwrap(),
+            "-s",
+            direct_secret_path.to_str().unwrap(),
+            "-o",
+            direct_stego_path.to_str().unwrap(),
+            "-p",
+            "direct-clip-pass-1234",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-bmp",
+            "-c",
+            direct_stego_path.to_str().unwrap(),
+            "-p",
+            "direct-clip-pass-1234",
+            "--clip",
+            "--clip-ttl",
+            "0",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "paste"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(direct_secret));
+
+    // 9. Extract-BMP binary payload to clipboard in Base64 without --output
+    use base64::Engine;
+    let bin_carrier_path = dir.path().join("carrier_bin.bmp");
+    let bin_secret_path = dir.path().join("secret_bin.bin");
+    let bin_stego_path = dir.path().join("stego_bin.bmp");
+
+    fs::write(&bin_carrier_path, generate_24bit_bmp(64, 64)).unwrap();
+    let binary_secret = vec![0x00, 0xFF, 0xFE, 0x80, 0x90, 0x12, 0x34, 0x56, 0xAA, 0xBB];
+    fs::write(&bin_secret_path, &binary_secret).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-bmp",
+            "-c",
+            bin_carrier_path.to_str().unwrap(),
+            "-s",
+            bin_secret_path.to_str().unwrap(),
+            "-o",
+            bin_stego_path.to_str().unwrap(),
+            "-p",
+            "bin-clip-pass-9999",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-bmp",
+            "-c",
+            bin_stego_path.to_str().unwrap(),
+            "-p",
+            "bin-clip-pass-9999",
+            "--clip",
+            "--clip-ttl",
+            "0",
+        ])
+        .assert()
+        .success();
+
+    let paste_out = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["clip", "paste"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let paste_str = String::from_utf8(paste_out).unwrap();
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(paste_str.trim())
+        .expect("clipboard should hold valid base64 for binary secret");
+    assert_eq!(decoded, binary_secret);
+
+    // Final clean up
     Command::cargo_bin("svault")
         .unwrap()
         .args(["clip", "clear"])
+        .assert()
+        .success();
+}
+
+fn generate_24bit_bmp(width: u32, height: u32) -> Vec<u8> {
+    let row_bytes = (width as usize) * 3;
+    let row_padding = (4 - (row_bytes % 4)) % 4;
+    let row_stride = row_bytes + row_padding;
+    let pixel_data_size = row_stride * (height as usize);
+    let file_size = (54 + pixel_data_size) as u32;
+
+    let mut buf = Vec::with_capacity(file_size as usize);
+    buf.extend_from_slice(b"BM");
+    buf.extend_from_slice(&file_size.to_le_bytes());
+    buf.extend_from_slice(&0u16.to_le_bytes());
+    buf.extend_from_slice(&0u16.to_le_bytes());
+    buf.extend_from_slice(&54u32.to_le_bytes());
+
+    buf.extend_from_slice(&40u32.to_le_bytes());
+    buf.extend_from_slice(&(width as i32).to_le_bytes());
+    buf.extend_from_slice(&(height as i32).to_le_bytes());
+    buf.extend_from_slice(&1u16.to_le_bytes());
+    buf.extend_from_slice(&24u16.to_le_bytes());
+    buf.extend_from_slice(&0u32.to_le_bytes());
+    buf.extend_from_slice(&(pixel_data_size as u32).to_le_bytes());
+    buf.extend_from_slice(&2835u32.to_le_bytes());
+    buf.extend_from_slice(&2835u32.to_le_bytes());
+    buf.extend_from_slice(&0u32.to_le_bytes());
+    buf.extend_from_slice(&0u32.to_le_bytes());
+
+    for r in 0..height {
+        for c in 0..width {
+            let pixel_val = 0x80u8.wrapping_add((r * width + c) as u8);
+            buf.push(pixel_val);
+            buf.push(pixel_val.wrapping_add(1));
+            buf.push(pixel_val.wrapping_add(2));
+        }
+        for pad_i in 0..row_padding {
+            buf.push(0xAA ^ (pad_i as u8));
+        }
+    }
+    buf
+}
+
+#[test]
+fn cli_capacity_bmp_wav_png_and_json() {
+    let dir = tempdir().unwrap();
+    let bmp_path = dir.path().join("carrier.bmp");
+    let wav_path = dir.path().join("carrier.wav");
+    let png_path = dir.path().join("carrier.png");
+    let invalid_path = dir.path().join("carrier.bin");
+
+    fs::write(&bmp_path, generate_24bit_bmp(100, 100)).unwrap();
+    fs::write(&wav_path, generate_pcm_wav(4000)).unwrap();
+    let minimal_png: [u8; 67] = [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
+        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+    ];
+    fs::write(&png_path, minimal_png).unwrap();
+    fs::write(&invalid_path, b"not a carrier").unwrap();
+
+    // 1. BMP capacity (text & JSON)
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", bmp_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("BMP 24-bit Image Carrier"))
+        .stdout(predicate::str::contains("100 x 100"))
+        .stdout(predicate::str::contains(
+            "Max Usable Payload:    3738 bytes",
+        ));
+
+    let bmp_json_output = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", bmp_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let bmp_val: serde_json::Value = serde_json::from_slice(&bmp_json_output).unwrap();
+    assert_eq!(bmp_val["carrier_type"], "bmp");
+    assert_eq!(bmp_val["width"], 100);
+    assert_eq!(bmp_val["height"], 100);
+    assert_eq!(bmp_val["total_pixels"], 10000);
+    assert_eq!(bmp_val["max_payload_bytes"], 3738);
+
+    // 2. WAV capacity (text & JSON)
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", wav_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("WAV Audio Carrier"))
+        .stdout(predicate::str::contains("Mode: LSB Capacity:"))
+        .stdout(predicate::str::contains("Mode: Chunk Capacity:"));
+
+    let wav_json_output = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", wav_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let wav_val: serde_json::Value = serde_json::from_slice(&wav_json_output).unwrap();
+    assert_eq!(wav_val["carrier_type"], "wav");
+    assert_eq!(wav_val["num_samples"], 4000);
+    assert_eq!(wav_val["lsb_max_payload_bytes"], 488);
+    assert_eq!(wav_val["chunk_mode_supported"], true);
+
+    // 3. PNG capacity (text & JSON)
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", png_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PNG Image Carrier"))
+        .stdout(predicate::str::contains("Mode: Chunk Capacity:"));
+
+    let png_json_output = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", png_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let png_val: serde_json::Value = serde_json::from_slice(&png_json_output).unwrap();
+    assert_eq!(png_val["carrier_type"], "png");
+    assert_eq!(png_val["mode"], "chunk");
+
+    // 4. Invalid carrier fails
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", invalid_path.to_str().unwrap()])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn cli_bmp_embed_inspect_and_extract_roundtrip() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("carrier.bmp");
+    let secret_path = dir.path().join("secret.txt");
+    let stego_path = dir.path().join("stego.bmp");
+    let extracted_path = dir.path().join("extracted.txt");
+
+    fs::write(&carrier_path, generate_24bit_bmp(64, 64)).unwrap();
+    let secret = b"bmp stego secret - shadow vault 24-bit LSB roundtrip!";
+    fs::write(&secret_path, secret).unwrap();
+
+    // 1. Embed BMP
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-bmp",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "bmp-passphrase-1234",
+            "--padding",
+            "64",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("embedded"));
+
+    // 2. Inspect stego BMP
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("container_version:"))
+        .stdout(predicate::str::contains("payload_bytes:"));
+
+    // 3. Extract BMP
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-bmp",
+            "-c",
+            stego_path.to_str().unwrap(),
+            "-o",
+            extracted_path.to_str().unwrap(),
+            "-p",
+            "bmp-passphrase-1234",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("extracted"));
+
+    let extracted = fs::read(&extracted_path).unwrap();
+    assert_eq!(extracted, secret);
+}
+
+#[test]
+fn cli_bmp_embed_with_decoy_flags_and_dual_extract() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("carrier.bmp");
+    let primary_path = dir.path().join("primary.txt");
+    let decoy_path = dir.path().join("decoy.txt");
+    let stego_path = dir.path().join("stego_decoy.bmp");
+    let out_primary = dir.path().join("out_primary.txt");
+    let out_decoy = dir.path().join("out_decoy.txt");
+
+    fs::write(&carrier_path, generate_24bit_bmp(120, 80)).unwrap();
+    let primary_data = b"TOP-SECRET primary payload concealed in BMP LSB";
+    let decoy_data = b"Plausible decoy innocent document for coercion";
+    fs::write(&primary_path, primary_data).unwrap();
+    fs::write(&decoy_path, decoy_data).unwrap();
+
+    // Embed decoy in BMP
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-bmp",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            primary_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "primary-super-secret-key",
+            "--decoy",
+            decoy_path.to_str().unwrap(),
+            "--decoy-passphrase",
+            "decoy-innocent-key",
+        ])
+        .assert()
+        .success();
+
+    // Inspect stego BMP should detect decoy container
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("decoy_container:   true"));
+
+    // Extract with primary passphrase
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-bmp",
+            "-c",
+            stego_path.to_str().unwrap(),
+            "-o",
+            out_primary.to_str().unwrap(),
+            "-p",
+            "primary-super-secret-key",
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(&out_primary).unwrap(), primary_data);
+
+    // Extract with decoy passphrase
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-bmp",
+            "-c",
+            stego_path.to_str().unwrap(),
+            "-o",
+            out_decoy.to_str().unwrap(),
+            "-p",
+            "decoy-innocent-key",
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read(&out_decoy).unwrap(), decoy_data);
+}
+
+#[test]
+fn cli_audit_bmp_clean_and_stego_and_json() {
+    let dir = tempdir().unwrap();
+    let clean_path = dir.path().join("clean.bmp");
+    let secret_path = dir.path().join("secret.txt");
+    let stego_path = dir.path().join("stego.bmp");
+
+    fs::write(&clean_path, generate_24bit_bmp(60, 60)).unwrap();
+    fs::write(&secret_path, b"audit bmp test payload").unwrap();
+
+    // 1. Audit clean BMP
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", clean_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("BMP Image Carrier"))
+        .stdout(predicate::str::contains("CLEAN CARRIER"));
+
+    let clean_audit_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", clean_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let clean_json: serde_json::Value = serde_json::from_slice(&clean_audit_json).unwrap();
+    assert_eq!(clean_json["carrier"]["carrier_type"], "bmp_image");
+    assert_eq!(clean_json["carrier"]["verdict"], "clean_carrier");
+    assert_eq!(clean_json["carrier"]["details"]["stego_lsb_present"], false);
+
+    // 2. Embed and audit stego BMP
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-bmp",
+            "-c",
+            clean_path.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "audit-stego-pass-2026",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("BMP Image Carrier"))
+        .stdout(predicate::str::contains("STEGO CARRIER DETECTED"))
+        .stdout(predicate::str::contains(
+            "Stego Pixel LSB:       present (active)",
+        ));
+
+    let stego_audit_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", stego_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stego_json: serde_json::Value = serde_json::from_slice(&stego_audit_json).unwrap();
+    assert_eq!(stego_json["carrier"]["carrier_type"], "bmp_image");
+    assert_eq!(stego_json["carrier"]["verdict"], "stego_carrier_detected");
+    assert_eq!(stego_json["carrier"]["details"]["stego_lsb_present"], true);
+}
+
+#[test]
+fn cli_bmp_error_handling() {
+    let dir = tempdir().unwrap();
+    let small_bmp = dir.path().join("small.bmp");
+    let secret_path = dir.path().join("secret.txt");
+    let out_bmp = dir.path().join("out.bmp");
+    let out_txt = dir.path().join("out.txt");
+
+    // 4x4 image = 16 pixels = 48 channel bytes = 48 bits < 96 bits overhead
+    fs::write(&small_bmp, generate_24bit_bmp(4, 4)).unwrap();
+    fs::write(&secret_path, b"data to fail").unwrap();
+
+    // 1. Capacity insufficient fails
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-bmp",
+            "-c",
+            small_bmp.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            out_bmp.to_str().unwrap(),
+            "-p",
+            "fail-pass",
+        ])
+        .assert()
+        .failure();
+
+    // 2. Wrong passphrase on extract-bmp fails
+    let carrier_bmp = dir.path().join("carrier.bmp");
+    let stego_bmp = dir.path().join("stego.bmp");
+    fs::write(&carrier_bmp, generate_24bit_bmp(60, 60)).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-bmp",
+            "-c",
+            carrier_bmp.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_bmp.to_str().unwrap(),
+            "-p",
+            "correct-passphrase",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-bmp",
+            "-c",
+            stego_bmp.to_str().unwrap(),
+            "-o",
+            out_txt.to_str().unwrap(),
+            "-p",
+            "wrong-passphrase",
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn cli_capacity_truncated_and_invalid_bmp() {
+    let dir = tempdir().unwrap();
+    let truncated_path = dir.path().join("truncated.bmp");
+    let bpp32_path = dir.path().join("bpp32.bmp");
+
+    fs::write(&truncated_path, b"BMshort").unwrap();
+
+    let mut bpp32 = generate_24bit_bmp(16, 16);
+    bpp32[28] = 32; // set to 32 bpp
+    fs::write(&bpp32_path, bpp32).unwrap();
+
+    // 1. Truncated BMP capacity fails with descriptive error
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", truncated_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("smaller than minimum BMP header"));
+
+    // 2. 32 bpp BMP capacity fails with descriptive error
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["capacity", bpp32_path.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported BMP bit depth: 32 bpp",
+        ));
+}
+
+#[test]
+fn cli_audit_truncated_bmp() {
+    let dir = tempdir().unwrap();
+    let truncated_path = dir.path().join("truncated.bmp");
+    fs::write(&truncated_path, b"BMtruncated_carrier_data").unwrap();
+
+    // 1. Text audit
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", truncated_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("BMP Image Carrier"))
+        .stdout(predicate::str::contains("SUSPICIOUS ANOMALY"))
+        .stdout(predicate::str::contains("Truncated BMP carrier"));
+
+    // 2. JSON audit
+    let audit_json = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", truncated_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let val: serde_json::Value = serde_json::from_slice(&audit_json).unwrap();
+    assert_eq!(val["carrier"]["carrier_type"], "bmp_image");
+    assert_eq!(val["carrier"]["verdict"], "suspicious_anomaly");
+}
+
+#[test]
+fn cli_bmp_extreme_aspect_ratio_roundtrip() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("extreme_1x500.bmp");
+    let secret_path = dir.path().join("secret.txt");
+    let stego_path = dir.path().join("stego.bmp");
+    let out_path = dir.path().join("extracted.txt");
+
+    fs::write(&carrier_path, generate_24bit_bmp(1, 500)).unwrap();
+    let secret_data =
+        b"extreme 1x500 aspect ratio BMP stego roundtrip with row padding preservation!";
+    fs::write(&secret_path, secret_data).unwrap();
+
+    // Embed
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "embed-bmp",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-s",
+            secret_path.to_str().unwrap(),
+            "-o",
+            stego_path.to_str().unwrap(),
+            "-p",
+            "aspect-ratio-pass-2026",
+            "--padding",
+            "16",
+        ])
+        .assert()
+        .success();
+
+    // Inspect
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", stego_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("container_version:"));
+
+    // Extract
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-bmp",
+            "-c",
+            stego_path.to_str().unwrap(),
+            "-o",
+            out_path.to_str().unwrap(),
+            "-p",
+            "aspect-ratio-pass-2026",
+        ])
+        .assert()
+        .success();
+
+    let extracted = fs::read(&out_path).unwrap();
+    assert_eq!(extracted, secret_data);
+}
+
+#[test]
+fn cli_extract_bmp_missing_both_output_and_clip_fails() {
+    let dir = tempdir().unwrap();
+    let carrier_path = dir.path().join("carrier.bmp");
+    fs::write(&carrier_path, generate_24bit_bmp(16, 16)).unwrap();
+
+    // Omitting both --output and --clip must fail with clap usage error
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "extract-bmp",
+            "-c",
+            carrier_path.to_str().unwrap(),
+            "-p",
+            "some-pass",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--output <OUTPUT>"));
+}
+
+#[test]
+fn cli_armor_and_dearmor_vault_roundtrip() {
+    let dir = tempdir().unwrap();
+    let secret_path = dir.path().join("secret.txt");
+    let vault_path = dir.path().join("vault.svault");
+    let asc_path = dir.path().join("vault.svault.asc");
+    let recovered_vault_path = dir.path().join("recovered.svault");
+    let decrypted_txt_path = dir.path().join("decrypted.txt");
+
+    let secret_data = b"Enterprise cryptographic vault protected by Cauchy MDS Reed-Solomon armor!";
+    fs::write(&secret_path, secret_data).unwrap();
+
+    // 1. Encrypt into .svault
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "encrypt",
+            "-i",
+            secret_path.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "armor-vault-pass-2026",
+        ])
+        .assert()
+        .success();
+
+    // 2. Armor into .svault.asc with K=4, M=2
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "armor",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-o",
+            asc_path.to_str().unwrap(),
+            "-k",
+            "4",
+            "-m",
+            "2",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("armored"))
+        .stdout(predicate::str::contains("stripes: 4+2"));
+
+    let asc_content = fs::read_to_string(&asc_path).unwrap();
+    assert!(asc_content.contains("-----BEGIN SHADOW VAULT ARMORED FILE-----"));
+    assert!(asc_content.contains("-----END SHADOW VAULT ARMORED FILE-----"));
+    assert!(asc_content.contains("Data-Stripes: 4"));
+    assert!(asc_content.contains("Parity-Stripes: 2"));
+
+    // 3. Dearmor back into .svault
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "dearmor",
+            "-i",
+            asc_path.to_str().unwrap(),
+            "-o",
+            recovered_vault_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dearmored"));
+
+    let original_vault_bytes = fs::read(&vault_path).unwrap();
+    let recovered_vault_bytes = fs::read(&recovered_vault_path).unwrap();
+    assert_eq!(recovered_vault_bytes, original_vault_bytes);
+
+    // 4. Decrypt recovered .svault and verify plaintext
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "decrypt",
+            "-i",
+            recovered_vault_path.to_str().unwrap(),
+            "-o",
+            decrypted_txt_path.to_str().unwrap(),
+            "-p",
+            "armor-vault-pass-2026",
+        ])
+        .assert()
+        .success();
+
+    let decrypted = fs::read(&decrypted_txt_path).unwrap();
+    assert_eq!(decrypted, secret_data);
+}
+
+#[test]
+fn cli_inspect_armored_container() {
+    let dir = tempdir().unwrap();
+    let secret_path = dir.path().join("secret.bin");
+    let vault_path = dir.path().join("vault.svault");
+    let asc_path = dir.path().join("vault.svault.asc");
+
+    fs::write(&secret_path, b"Inspection vector for ASCII armor!").unwrap();
+
+    // Encrypt
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "encrypt",
+            "-i",
+            secret_path.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "inspect-pass-2026",
+        ])
+        .assert()
+        .success();
+
+    // Armor
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "armor",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-o",
+            asc_path.to_str().unwrap(),
+            "-k",
+            "3",
+            "-m",
+            "2",
+        ])
+        .assert()
+        .success();
+
+    // Inspect armored container directly
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["inspect", asc_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("armored_container: true"))
+        .stdout(predicate::str::contains(
+            "armor_mode:        Cauchy-RS-GF256",
+        ))
+        .stdout(predicate::str::contains("data_stripes:      3"))
+        .stdout(predicate::str::contains("parity_stripes:    2"))
+        .stdout(predicate::str::contains("intact_stripes:    5/5"))
+        .stdout(predicate::str::contains("container_version: 1"));
+}
+
+#[test]
+fn cli_audit_armored_clean_and_json() {
+    let dir = tempdir().unwrap();
+    let secret_path = dir.path().join("plain.txt");
+    let asc_path = dir.path().join("plain.txt.asc");
+
+    fs::write(&secret_path, b"Auditing ASCII armor resilience and parity!").unwrap();
+
+    // Armor directly
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "armor",
+            "-i",
+            secret_path.to_str().unwrap(),
+            "-o",
+            asc_path.to_str().unwrap(),
+            "-k",
+            "4",
+            "-m",
+            "2",
+        ])
+        .assert()
+        .success();
+
+    // 1. Text audit
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", asc_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ASCII Armored Container"))
+        .stdout(predicate::str::contains("All 6 stripes intact"));
+
+    // 2. JSON audit
+    let output = Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", asc_path.to_str().unwrap(), "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let val: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(val["carrier"]["carrier_type"], "armored_ascii");
+    assert_eq!(val["carrier"]["verdict"], "encrypted_container");
+    assert_eq!(val["carrier"]["details"]["total_chunks_or_subchunks"], 6);
+}
+
+#[test]
+fn cli_repair_and_dearmor_corrupted_stripe() {
+    let dir = tempdir().unwrap();
+    let secret_path = dir.path().join("secret.txt");
+    let vault_path = dir.path().join("vault.svault");
+    let asc_path = dir.path().join("vault.svault.asc");
+    let repaired_asc_path = dir.path().join("repaired.svault.asc");
+    let recovered_vault_path = dir.path().join("recovered.svault");
+    let decrypted_txt_path = dir.path().join("decrypted.txt");
+
+    let secret_data = b"Self-healing Reed-Solomon test vector via CLI repair subcommand!";
+    fs::write(&secret_path, secret_data).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "encrypt",
+            "-i",
+            secret_path.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "self-heal-pass-2026",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "armor",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-o",
+            asc_path.to_str().unwrap(),
+            "-k",
+            "4",
+            "-m",
+            "2",
+        ])
+        .assert()
+        .success();
+
+    // Corrupt Stripe 1 in the armored text
+    let original_asc = fs::read_to_string(&asc_path).unwrap();
+    let mut corrupted_asc = String::new();
+    let mut in_stripe_1 = false;
+    for line in original_asc.lines() {
+        if line.contains("=== STRIPE 1 (DATA)") {
+            in_stripe_1 = true;
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        } else if in_stripe_1 && line.starts_with("=== STRIPE") {
+            in_stripe_1 = false;
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        } else if in_stripe_1 && !line.is_empty() {
+            corrupted_asc.push_str("CORRUPTED_BASE64_LINE_XYZ\n");
+        } else {
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        }
+    }
+    fs::write(&asc_path, &corrupted_asc).unwrap();
+
+    // Audit must flag suspicious anomaly with stripe CRC mismatch
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args(["audit", asc_path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SUSPICIOUS ANOMALY"))
+        .stdout(predicate::str::contains(
+            "Stripe #1 (data) CRC-32 checksum mismatch",
+        ));
+
+    // Run repair subcommand with --json
+    let repair_output = Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "repair",
+            "-i",
+            asc_path.to_str().unwrap(),
+            "-o",
+            repaired_asc_path.to_str().unwrap(),
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let rep_val: serde_json::Value = serde_json::from_slice(&repair_output).unwrap();
+    assert_eq!(rep_val["success"], true);
+    assert_eq!(rep_val["corrupted_stripes"], 1);
+    assert_eq!(rep_val["reconstructed_stripes"], 1);
+
+    // Dearmor repaired container
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "dearmor",
+            "-i",
+            repaired_asc_path.to_str().unwrap(),
+            "-o",
+            recovered_vault_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // Decrypt and verify
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "decrypt",
+            "-i",
+            recovered_vault_path.to_str().unwrap(),
+            "-o",
+            decrypted_txt_path.to_str().unwrap(),
+            "-p",
+            "self-heal-pass-2026",
+        ])
+        .assert()
+        .success();
+
+    let decrypted = fs::read(&decrypted_txt_path).unwrap();
+    assert_eq!(decrypted, secret_data);
+}
+
+#[test]
+fn cli_repair_binary_flag_reconstructs_directly() {
+    let dir = tempdir().unwrap();
+    let secret_path = dir.path().join("secret.bin");
+    let asc_path = dir.path().join("direct.asc");
+    let recovered_path = dir.path().join("direct_repaired.bin");
+
+    let secret_data = b"Direct binary extraction via repair --binary flag.";
+    fs::write(&secret_path, secret_data).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "armor",
+            "-i",
+            secret_path.to_str().unwrap(),
+            "-o",
+            asc_path.to_str().unwrap(),
+            "-k",
+            "3",
+            "-m",
+            "2",
+        ])
+        .assert()
+        .success();
+
+    // Corrupt Stripe 0
+    let original_asc = fs::read_to_string(&asc_path).unwrap();
+    let mut corrupted_asc = String::new();
+    let mut in_stripe_0 = false;
+    for line in original_asc.lines() {
+        if line.contains("=== STRIPE 0 (DATA)") {
+            in_stripe_0 = true;
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        } else if in_stripe_0 && line.starts_with("=== STRIPE") {
+            in_stripe_0 = false;
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        } else if in_stripe_0 && !line.is_empty() {
+            corrupted_asc.push_str("BAD_DATA_0000\n");
+        } else {
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        }
+    }
+    fs::write(&asc_path, &corrupted_asc).unwrap();
+
+    // Repair with --binary
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "repair",
+            "-i",
+            asc_path.to_str().unwrap(),
+            "-o",
+            recovered_path.to_str().unwrap(),
+            "--binary",
+        ])
+        .assert()
+        .success();
+
+    let recovered = fs::read(&recovered_path).unwrap();
+    assert_eq!(recovered, secret_data);
+}
+
+#[test]
+fn cli_dearmor_transparent_auto_recovery() {
+    let dir = tempdir().unwrap();
+    let secret_path = dir.path().join("secret.txt");
+    let asc_path = dir.path().join("auto_repair.asc");
+    let recovered_path = dir.path().join("recovered.txt");
+
+    let secret_data = b"Transparent error correction during dearmor command execution.";
+    fs::write(&secret_path, secret_data).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "armor",
+            "-i",
+            secret_path.to_str().unwrap(),
+            "-o",
+            asc_path.to_str().unwrap(),
+            "-k",
+            "4",
+            "-m",
+            "2",
+        ])
+        .assert()
+        .success();
+
+    // Corrupt Stripe 2
+    let original_asc = fs::read_to_string(&asc_path).unwrap();
+    let mut corrupted_asc = String::new();
+    let mut in_stripe_2 = false;
+    for line in original_asc.lines() {
+        if line.contains("=== STRIPE 2 (DATA)") {
+            in_stripe_2 = true;
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        } else if in_stripe_2 && line.starts_with("=== STRIPE") {
+            in_stripe_2 = false;
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        } else if in_stripe_2 && !line.is_empty() {
+            corrupted_asc.push_str("BAD_STRIPE_2_PAYLOAD\n");
+        } else {
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        }
+    }
+    fs::write(&asc_path, &corrupted_asc).unwrap();
+
+    // Dearmor directly from corrupted file without explicit repair
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "dearmor",
+            "-i",
+            asc_path.to_str().unwrap(),
+            "-o",
+            recovered_path.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let recovered = fs::read(&recovered_path).unwrap();
+    assert_eq!(recovered, secret_data);
+}
+
+#[test]
+fn cli_dearmor_excessive_corruption_fails() {
+    let dir = tempdir().unwrap();
+    let secret_path = dir.path().join("secret.txt");
+    let asc_path = dir.path().join("excessive.asc");
+    let out_path = dir.path().join("out.txt");
+
+    fs::write(&secret_path, b"Excessive corruption test vector").unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "armor",
+            "-i",
+            secret_path.to_str().unwrap(),
+            "-o",
+            asc_path.to_str().unwrap(),
+            "-k",
+            "4",
+            "-m",
+            "2",
+        ])
+        .assert()
+        .success();
+
+    // Corrupt 3 stripes (stripes 0, 1, 2) when parity capacity M=2
+    let original_asc = fs::read_to_string(&asc_path).unwrap();
+    let mut corrupted_asc = String::new();
+    let mut in_bad = false;
+    for line in original_asc.lines() {
+        if line.contains("=== STRIPE 0 ")
+            || line.contains("=== STRIPE 1 ")
+            || line.contains("=== STRIPE 2 ")
+        {
+            in_bad = true;
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        } else if in_bad && line.starts_with("=== STRIPE") {
+            in_bad = false;
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        } else if in_bad && !line.is_empty() {
+            corrupted_asc.push_str("CORRUPTED\n");
+        } else {
+            corrupted_asc.push_str(line);
+            corrupted_asc.push('\n');
+        }
+    }
+    fs::write(&asc_path, &corrupted_asc).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "dearmor",
+            "-i",
+            asc_path.to_str().unwrap(),
+            "-o",
+            out_path.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecoverable corruption"));
+}
+
+#[test]
+fn cli_armor_and_dearmor_clipboard_guard() {
+    let dir = tempdir().unwrap();
+    let secret_path = dir.path().join("clip_secret.txt");
+    let asc_path = dir.path().join("clip_vault.asc");
+
+    let secret_data = b"Auto-expiring clipboard test with Reed-Solomon armor!";
+    fs::write(&secret_path, secret_data).unwrap();
+
+    // 1. Armor with --clip and short TTL
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "armor",
+            "-i",
+            secret_path.to_str().unwrap(),
+            "-o",
+            asc_path.to_str().unwrap(),
+            "--clip",
+            "--clip-ttl",
+            "2",
+        ])
+        .assert()
+        .success();
+
+    // 2. Dearmor with --clip and short TTL
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "dearmor",
+            "-i",
+            asc_path.to_str().unwrap(),
+            "--clip",
+            "--clip-ttl",
+            "2",
+        ])
         .assert()
         .success();
 }

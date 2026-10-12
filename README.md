@@ -22,11 +22,14 @@
 3. **Lossless Carrier Steganography** — embeds encrypted containers inside ordinary media files:
    - **PNG Images** — injects an `svLt` private ancillary chunk before `IEND` with valid IEEE 802.3 CRC-32 checksums.
    - **WAV Audio Files** — supports both RIFF/WAVE subchunk (`svLt`) and 16-bit PCM audio sample Least Significant Bit (LSB) replacement with CRC-32 validation.
-4. **Shamir's Secret Sharing (`M-of-N` Key Splitting, `src/shamir.rs`)** — mathematically provable information-theoretic secret sharing over $\text{GF}(256)$ with constant-time arithmetic. Split master recovery keys, passphrases, or `.svault` containers into $N$ shares requiring any $M$ shares to reconstruct (`svault split` / `svault combine`).
-5. **Passphrase Strength & Carrier Entropy Auditor (`src/audit.rs`)** — evaluates passphrase resiliency via Shannon entropy bits-per-byte, character pool diversity, and predictive vulnerability pattern detection (repeated characters, ascending/descending sequences, keyboard walks, leetspeak dictionary matching). Audits steganography carriers (PNG chunks, WAV RIFF/LSB streams) and encrypted `.svault` containers for anomalies and tampering (`svault audit <target>` / `svault audit -p <passphrase>`).
-6. **RFC 6238 TOTP 2FA Vault (`src/totp.rs`)** — zero-dependency encrypted local two-factor authentication secret store sealed inside `.svault` containers. Features RFC 4648 Base32 codec, self-contained RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1/256/512), dynamic truncation, `otpauth://totp/...` URI parser/serializer, constant-time verification against timing attacks, and terminal visual countdown progress bar (`svault totp add`, `svault totp code`, `svault totp list`, `svault totp verify`).
-7. **Auto-Expiring Clipboard Guard (`src/clipboard_guard.rs`)** — securely copies decrypted secrets, passwords, or TOTP tokens to the Windows clipboard with automatic suppression of Windows 10/11 Clipboard History and Cloud Sync (`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`). Automatically wipes the clipboard after a configurable TTL (e.g., `--clip-ttl 15`) with constant-time SHA-256 fingerprint matching to avoid overwriting user clipboard changes made subsequently (`svault clip copy`, `svault clip paste`, `svault clip clear`, `svault clip status`, or `--clip` across decryption/extraction commands).
-8. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
+   - **BMP Images (`src/bmp.rs`)** — modulates least significant bits (LSB) across 24-bit uncompressed RGB pixel channels with strict 4-byte row padding preservation and 12-byte tamper-resistant stego envelope (`svLt` magic, length, payload, CRC-32).
+4. **Universal Carrier Capacity Estimation (`capacity`)** — calculates total and usable byte capacity across steganography carrier files (`.bmp`, `.wav`, `.png`) with optional JSON output (`svault capacity <carrier> [--json]`).
+5. **Shamir's Secret Sharing (`M-of-N` Key Splitting, `src/shamir.rs`)** — mathematically provable information-theoretic secret sharing over $\text{GF}(256)$ with constant-time arithmetic. Split master recovery keys, passphrases, or `.svault` containers into $N$ shares requiring any $M$ shares to reconstruct (`svault split` / `svault combine`).
+6. **Passphrase Strength & Carrier Entropy Auditor (`src/audit.rs`)** — evaluates passphrase resiliency via Shannon entropy bits-per-byte, character pool diversity, and predictive vulnerability pattern detection (repeated characters, ascending/descending sequences, keyboard walks, leetspeak dictionary matching). Audits steganography carriers (PNG chunks, WAV RIFF/LSB streams, 24-bit BMP pixel LSB) and encrypted `.svault` containers for anomalies and tampering (`svault audit <target>` / `svault audit -p <passphrase>`).
+7. **RFC 6238 TOTP 2FA Vault (`src/totp.rs`)** — zero-dependency encrypted local two-factor authentication secret store sealed inside `.svault` containers. Features RFC 4648 Base32 codec, self-contained RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1/256/512), dynamic truncation, `otpauth://totp/...` URI parser/serializer, constant-time verification against timing attacks, and terminal visual countdown progress bar (`svault totp add`, `svault totp code`, `svault totp list`, `svault totp verify`).
+8. **Auto-Expiring Clipboard Guard (`src/clipboard_guard.rs`)** — securely copies decrypted secrets, passwords, or TOTP tokens to the Windows clipboard with automatic suppression of Windows 10/11 Clipboard History and Cloud Sync (`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`). Automatically wipes the clipboard after a configurable TTL (e.g., `--clip-ttl 15`) with constant-time SHA-256 fingerprint matching to avoid overwriting user clipboard changes made subsequently (`svault clip copy`, `svault clip paste`, `svault clip clear`, `svault clip status`, or `--clip` across decryption/extraction commands).
+9. **Reed-Solomon / Parity Error-Correcting Armor (`src/armor.rs`)** — adds block parity recovery stripes and ASCII-armored `.svault.asc` export/import so containers survive partial bit rot or text transmission corruptions. Employs a Cauchy generator matrix $[I_K; A]$ over $\text{GF}(256)$ guaranteeing Maximum Distance Separable (MDS) erasure correction: ANY $K$ intact shards out of $K + M$ total stripes can reconstruct all original data shards. Supports automated corruption detection, self-healing document repair (`svault repair`), auto-detection in `inspect` and `audit`, and auto-expiring clipboard guard (`svault armor`, `svault dearmor`, `svault repair`).
+10. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
 ### Features
 
@@ -64,7 +67,19 @@
   - **RIFF Subchunk Mode (`--mode chunk`)**: attaches dedicated `svLt` metadata chunk with CRC-32.
   - **16-bit PCM LSB Mode (`--lsb` / `--mode lsb`)**: alters least significant bit of 16-bit samples for inaudible acoustic concealment without changing file length.
   - **Auto Detection**: `extract-wav` automatically detects and unpacks both subchunk and LSB carriers.
-- **Zero-Knowledge Header Inspection (`inspect`)** — view container version, DPAPI binding flag, decoy container presence, payload byte size, and salt hex across `.svault`, `.png`, and `.wav` files without decrypting or exposing hidden slot sizes.
+- **BMP 24-bit Pixel LSB Steganography (`embed-bmp` / `extract-bmp`)** — bit-level LSB concealment:
+  - **Row Stride Padding Preservation**: accurately navigates 4-byte row alignment padding, embedding data exclusively in R, G, B color channels without corrupting row strides.
+  - **Tamper-Resistant 12-Byte Envelope**: frames embedded payloads inside `[svLt: 4B][len: 4B LE][payload: NB][crc32: 4B LE]` with constant-time CRC-32 validation.
+  - **Carrier Audit & Steganalysis**: integrates with `svault audit` to verify pixel LSB integrity and detect payload presence.
+  - **Decoy & Clipboard Integration**: supports plausible deniability decoy vaults (`--decoy`, `--decoy-passphrase`) and clipboard guard auto-expiration (`--clip`, `--clip-ttl`).
+- **Reed-Solomon / Parity Error-Correcting Armor (`armor` / `dearmor` / `repair`)** — robust container error correction and ASCII armor:
+  - **Cauchy MDS Reed-Solomon over $\text{GF}(256)$**: uses generator matrix $[I_K; A]$ with Cauchy entries $A_{i, j} = \frac{1}{(K + i) \oplus j}$. Any $K$ intact shards out of $K + M$ stripes reconstruct all data shards via Gaussian elimination in $\text{GF}(256)$.
+  - **Per-Stripe CRC-32 & SHA-256 Binding**: each stripe has individual CRC-32 validation for precise erasure localization; overall container payload is authenticated by SHA-256.
+  - **Self-Healing Repair Subcommand (`repair`)**: reconstructs damaged stripes and outputs a refreshed `.svault.asc` document or exports directly to binary (`--binary`) with full `--json` diagnostics.
+  - **Transparent Recovery in `dearmor`**: automatically invokes Cauchy RS erasure reconstruction if any data stripes are corrupted in transit.
+  - **Auto-Detection in `inspect` & `audit`**: inspects stripe health and audits CRC-32 integrity across all data and parity blocks.
+- **Universal Carrier Capacity Estimation (`capacity`)** — calculates total carrier capacity, usable payload capacity, and stego overhead bytes across `.bmp`, `.wav`, and `.png` carriers with optional `--json` machine-readable output.
+- **Zero-Knowledge Header Inspection (`inspect`)** — view container version, DPAPI binding flag, decoy container presence, payload byte size, and salt hex across `.svault`, `.png`, `.wav`, and `.bmp` files without decrypting or exposing hidden slot sizes.
 - **3-Pass Secure File Shredder (`shred`)** — overwrites sensitive plaintext files with `0x00`, `0xFF`, and CSPRNG random bytes before unlinking.
 - **Single Static Binary** — compiled with `+crt-static`, `opt-level = "z"`, LTO, and stripped symbols. Zero external runtime dependencies.
 
@@ -77,7 +92,8 @@
                                                                         ├── Direct disk storage
                                                                         └── Stego Carrier
                                                                               ├── PNG Image (.png)
-                                                                              └── WAV Audio (.wav)
+                                                                              ├── WAV Audio (.wav)
+                                                                              └── BMP Image (.bmp)
 ```
 
 ### Quick Start
@@ -95,7 +111,7 @@ svault decrypt -i deniable.svault -o revealed.txt -p "decoy-harmless-pass"
 # Supplying primary password unlocks the true secret
 svault decrypt -i deniable.svault -o restored.txt -p "primary-secret-pass"
 
-# 4. Inspect container metadata without decrypting (.svault, .png, or .wav)
+# 4. Inspect container metadata without decrypting (.svault, .png, .wav, or .bmp)
 svault inspect deniable.svault
 
 # 5. Conceal a dual-password decoy vault directly inside a PNG image
@@ -112,47 +128,71 @@ svault embed-wav -c track.wav -s classified.txt -o track-lsb.wav -p "primary-sec
 # 8. Extract and decrypt secret from WAV audio file (auto-detects chunk or LSB)
 svault extract-wav -c track-lsb.wav -o restored-audio.txt -p "primary-secret-pass"
 
-# 9. Securely shred the original plaintext file (3 passes)
+# 9. Estimate carrier capacity for steganography embedding (.bmp, .wav, or .png)
+svault capacity landscape.bmp
+svault capacity track.wav --json
+
+# 10. Conceal secret inside a 24-bit BMP image via pixel LSB steganography
+svault embed-bmp -c landscape.bmp -s classified.txt -o landscape-stego.bmp -p "primary-secret-pass"
+
+# 11. Extract secret from BMP image directly to auto-expiring clipboard
+svault extract-bmp -c landscape-stego.bmp -p "primary-secret-pass" --clip --clip-ttl 15
+
+# 12. Securely shred the original plaintext file (3 passes)
 svault shred classified.txt --passes 3
 
-# 10. Split a master recovery key or secret into 3-of-5 Shamir shares
+# 13. Split a master recovery key or secret into 3-of-5 Shamir shares
 svault split -s "your-master-seed-or-secret" -m 3 -n 5 -o shares/share
 
-# 11. Combine any 3 shares to reconstruct the original secret
+# 14. Combine any 3 shares to reconstruct the original secret
 svault combine shares/share_1.share shares/share_3.share shares/share_5.share -o restored.txt
 
-# 12. Audit passphrase strength, Shannon entropy, and crack time estimates
+# 15. Audit passphrase strength, Shannon entropy, and crack time estimates
 svault audit -p "Correct-Horse-Battery-Staple-2026!"
 
-# 13. Audit a stego carrier image or container for anomalies and hidden payloads
+# 16. Audit a stego carrier image or container for anomalies and hidden payloads
 svault audit wallpaper-stego.png --json
 
-# 14. Add a TOTP 2FA credential via Base32 secret or otpauth:// URI
+# 17. Add a TOTP 2FA credential via Base32 secret or otpauth:// URI
 svault totp add github --secret "JBSWY3DPEHPK3PXP" --issuer "GitHub" --vault totp.svault -p "vault-pass"
 svault totp add --uri "otpauth://totp/Google:alice?secret=JBSWY3DPEHPK3PXP&issuer=Google" --vault totp.svault -p "vault-pass"
 
-# 15. Generate live 2FA OTP code with visual countdown progress bar (or --json)
+# 18. Generate live 2FA OTP code with visual countdown progress bar (or --json)
 svault totp code github --vault totp.svault -p "vault-pass"
 svault totp code github --vault totp.svault -p "vault-pass" --json
 
-# 16. Verify an OTP code against skew window (+/- 1 step)
+# 19. Verify an OTP code against skew window (+/- 1 step)
 svault totp verify github 123456 --skew 1 --vault totp.svault -p "vault-pass"
 
-# 17. List and export 2FA accounts
+# 20. List and export 2FA accounts
 svault totp list --vault totp.svault -p "vault-pass"
 svault totp export github --vault totp.svault -p "vault-pass"
 
-# 18. Copy a secret to clipboard with 15-second auto-expiring guard (or silent mode)
+# 21. Copy a secret to clipboard with 15-second auto-expiring guard (or silent mode)
 svault clip copy "my-super-secret-password" --ttl 15
 svault clip copy "my-super-secret-password" --ttl 15 --silent
 
-# 19. Check clipboard status and history exclusion metadata, or manually clear
+# 22. Check clipboard status and history exclusion metadata, or manually clear
 svault clip status
 svault clip clear
 
-# 20. Decrypt directly to protected clipboard without printing to terminal or writing plaintext to disk
+# 23. Decrypt directly to protected clipboard without printing to terminal or writing plaintext to disk
 svault decrypt -i secret.svault -p "vault-pass" --clip --clip-ttl 30
 svault totp code github --vault totp.svault -p "vault-pass" --clip --clip-ttl 15
+
+# 24. Armor a .svault container with Cauchy Reed-Solomon parity stripes (.svault.asc)
+svault armor -i secret.svault -o secret.svault.asc -k 4 -m 2
+
+# 25. Decode an ASCII armored file back to original .svault container
+svault dearmor -i secret.svault.asc -o recovered.svault
+
+# 26. Repair a corrupted .svault.asc file using Cauchy Reed-Solomon parity
+svault repair -i corrupted.svault.asc -o repaired.svault.asc --json
+svault repair -i corrupted.svault.asc -o direct_recovered.svault --binary
+
+# 27. Inspect and audit ASCII armored container stripes and integrity
+svault inspect secret.svault.asc
+svault audit secret.svault.asc --json
 ```
 
 ### License & Attribution
@@ -175,11 +215,14 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
 3. **무손실 미디어 스테가노그래피 은닉** — 암호화된 컨테이너를 다양한 일반 미디어 파일 내부에 완벽히 은닉합니다:
    - **PNG 이미지 (`embed` / `extract`)**: 비표준 렌더링에 영향을 주지 않는 `svLt` 청크 + IEEE 802.3 CRC-32 무결성 검증 (미끼 금고 직접 은닉 지원).
    - **WAV 오디오 (`embed-wav` / `extract-wav`)**: RIFF 서브청크 모드(`--mode chunk`) 및 16비트 PCM 오디오 LSB 모드(`--lsb`) 지원 + CRC-32 검증.
-4. **샤미르 비밀 공유 (`M-of-N` 키 분할, `src/shamir.rs`)** — $\text{GF}(256)$ 유한체 기반 정보이론적 비밀 분할/복원 엔진. 분기 없는 상수시간(Constant-Time) 연산으로 부채널 공격을 방어하며, 마스터 복구 키, 비밀번호, 대용량 바이너리 금고를 $N$개 조각으로 분할하여 임의의 $M$개 조각으로만 원본을 복원(`svault split` / `svault combine`)합니다. 아머드 텍스트, 한 줄 압축, JSON 직렬화 및 SHA-256/CRC-32 무결성 검증을 지원합니다.
-5. **비밀번호 강도 & 스테가노그래피 캐리어 엔트로피 감사기 (`src/audit.rs`)** — 섀넌 엔트로피(Shannon entropy bits/byte), 문자 풀 다양성, 취약 패턴 탐지(반복 문자, 연속 시퀀스, 키보드 워크, 리트스피크 사전 매칭)를 통해 비밀번호 내구성을 감사하고, PNG 청크·WAV 서브청크/LSB 스트림 및 `.svault` 컨테이너의 변조·이상 징후를 정밀 분석(`svault audit <대상>` / `svault audit -p <비밀번호>`)합니다.
-6. **RFC 6238 TOTP 2FA 보안 금고 (`src/totp.rs`)** — 외부 라이브러리 의존성 0개의 독립 로컬 암호화 2차 인증(2FA) 금고 엔진. RFC 4648 Base32 코덱, 자체 완비 RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1/256/512), `otpauth://totp/...` URI 파서/직렬화기, 부채널 타이밍 공격을 방어하는 상수시간 검증 및 터미널 시각적 잔여시간 카운트다운 진행바를 지원합니다 (`svault totp add`, `svault totp code`, `svault totp list`, `svault totp verify`).
-7. **자동 만료 클립보드 가드 (`src/clipboard_guard.rs`)** — 복호화된 비밀번호, TOTP 2FA 코드, 복구 시드문구를 Windows 클립보드로 안전하게 복사하고 설정된 유효시간(TTL, 예: `--clip-ttl 15`) 후 자동 소거합니다. Windows 10/11 클립보드 기록(Win + V) 및 클라우드 동기화 등록을 원천 차단하는 포맷 메타데이터(`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`)를 자동 주입하며, 소거 전 SHA-256 상수시간 지문 비교(`constant_time_eq_32`)를 수행해 사용자가 이후에 복사한 다른 클립보드 데이터를 덮어쓰지 않도록 안전하게 보호합니다 (`svault clip`, 및 복호화 명령 시 `--clip`).
-8. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
+   - **BMP 이미지 (`embed-bmp` / `extract-bmp`)**: 24비트 무압축 BMP R/G/B 색상 채널 LSB(최하위 비트) 변조 은닉, 4바이트 행 패딩 완벽 보존 및 12바이트 무결성 봉투(`svLt` 매직, 길이, CRC-32) 탑재.
+4. **범용 캐리어 용량 측정기 (`capacity`)** — `.bmp`, `.wav`, `.png` 미디어 파일의 총 캐리어 크기, 실제 은닉 가용 바이트 용량, 스테고 오버헤드를 정밀 산출합니다 (`svault capacity <캐리어> [--json]`).
+5. **샤미르 비밀 공유 (`M-of-N` 키 분할, `src/shamir.rs`)** — $\text{GF}(256)$ 유한체 기반 정보이론적 비밀 분할/복원 엔진. 분기 없는 상수시간(Constant-Time) 연산으로 부채널 공격을 방어하며, 마스터 복구 키, 비밀번호, 대용량 바이너리 금고를 $N$개 조각으로 분할하여 임의의 $M$개 조각으로만 원본을 복원(`svault split` / `svault combine`)합니다. 아머드 텍스트, 한 줄 압축, JSON 직렬화 및 SHA-256/CRC-32 무결성 검증을 지원합니다.
+6. **비밀번호 강도 & 스테가노그래피 캐리어 엔트로피 감사기 (`src/audit.rs`)** — 섀넌 엔트로피(Shannon entropy bits/byte), 문자 풀 다양성, 취약 패턴 탐지(반복 문자, 연속 시퀀스, 키보드 워크, 리트스피크 사전 매칭)를 통해 비밀번호 내구성을 감사하고, PNG 청크·WAV 서브청크/LSB 스트림·BMP 픽셀 LSB 및 `.svault` 컨테이너의 변조·이상 징후를 정밀 분석(`svault audit <대상>` / `svault audit -p <비밀번호>`)합니다.
+7. **RFC 6238 TOTP 2FA 보안 금고 (`src/totp.rs`)** — 외부 라이브러리 의존성 0개의 독립 로컬 암호화 2차 인증(2FA) 금고 엔진. RFC 4648 Base32 코덱, 자체 완비 RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1/256/512), `otpauth://totp/...` URI 파서/직렬화기, 부채널 타이밍 공격을 방어하는 상수시간 검증 및 터미널 시각적 잔여시간 카운트다운 진행바를 지원합니다 (`svault totp add`, `svault totp code`, `svault totp list`, `svault totp verify`).
+8. **자동 만료 클립보드 가드 (`src/clipboard_guard.rs`)** — 복호화된 비밀번호, TOTP 2FA 코드, 복구 시드문구를 Windows 클립보드로 안전하게 복사하고 설정된 유효시간(TTL, 예: `--clip-ttl 15`) 후 자동 소거합니다. Windows 10/11 클립보드 기록(Win + V) 및 클라우드 동기화 등록을 원천 차단하는 포맷 메타데이터(`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`)를 자동 주입하며, 소거 전 SHA-256 상수시간 지문 비교(`constant_time_eq_32`)를 수행해 사용자가 이후에 복사한 다른 클립보드 데이터를 덮어쓰지 않도록 안전하게 보호합니다 (`svault clip`, 및 복호화 명령 시 `--clip`).
+9. **리드-솔로몬 / 패리티 오류 정정 아머 (`src/armor.rs`)** — 블록 패리티 복구 스트라이프와 ASCII 아머드 `.svault.asc` 내보내기/가져오기/복구를 지원하여 부분적인 비트 손상(Bit Rot)이나 텍스트 전송 채널 상의 손상에서도 컨테이너를 복원합니다. $\text{GF}(256)$ 상의 코시(Cauchy) 생성 행렬 $[I_K; A]$을 사용하여 MDS(최대 거리 분리) 부호 성질을 보장하므로, 총 $K + M$개 스트라이프 중 임의의 $K$개 온전한 조각만 있으면 모든 원본 데이터를 완벽하게 재구성합니다. 자동 손상 탐지, 자가 치유 복구(`svault repair`), `inspect` 및 `audit` 자동 감지, 자동 만료 클립보드 가드를 결합 지원합니다 (`svault armor`, `svault dearmor`, `svault repair`).
+10. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
 ### 주요 기능
 
@@ -214,7 +257,19 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
 - **선제적 메모리 제로화 (`zeroize`)** — 민감한 키 버퍼와 평문 메모리를 스코프 종료 시 즉각 안전하게 소거합니다.
 - **PNG 이미지 은닉 (`embed` / `extract`)** — PNG 표준 청크 규격과 CRC-32 체크섬을 준수하여 이미지 손상 없이 암호화 페이로드 및 미끼 컨테이너를 은닉·추출합니다.
 - **WAV 오디오 은닉 (`embed-wav` / `extract-wav`)** — RIFF 서브청크 은닉 및 16비트 PCM LSB 미세 비트 은닉(음질/재생 영향 제로, 파일 크기 보존)을 지원하며 자동 감지 추출(`--mode auto`)을 지원합니다.
-- **컨테이너 헤더 검사 (`inspect`)** — 복호화 없이 `.svault`, `.png`, `.wav` 파일의 컨테이너 버전, DPAPI 귀속 여부, 미끼 컨테이너 여부, 페이로드 크기, 솔트 값을 즉시 확인합니다 (은닉 슬롯의 크기는 은폐).
+- **BMP 24비트 픽셀 LSB 스테가노그래피 (`embed-bmp` / `extract-bmp`)** — 24비트 무압축 BMP 이미지 비트 단위 은닉:
+  - **행 패딩 완벽 보존**: 표준 Windows BMP 4바이트 행 패딩(Row Stride Padding)을 변조하지 않고 R, G, B 색상 채널만 정확히 순회하여 이미지 뷰어 왜곡 및 파일 손상 원천 차단.
+  - **12바이트 무결성 봉투**: `[매직 "svLt": 4B][길이: 4B LE][페이로드: NB][CRC-32: 4B LE]` 봉투 캡슐화 및 부채널 저항 상수시간 CRC-32 검증.
+  - **캐리어 감사 & 스테그분석 (`audit`)**: `svault audit` 명령어로 BMP 픽셀 LSB 무결성, 은닉 스트림 유무 및 정상 이미지 판별.
+  - **미끼 금고 및 클립보드 연동**: 그럴듯한 부인 이중 암호 미끼 금고(`--decoy`, `--decoy-passphrase`) 및 자동 만료 클립보드(`--clip`, `--clip-ttl`) 완전 지원.
+- **리드-솔로몬 / 패리티 오류 정정 아머 (`armor` / `dearmor` / `repair`)** — 강력한 컨테이너 오류 정정 및 ASCII 아머드 엔진:
+  - **$\text{GF}(256)$ 코시 MDS 리드-솔로몬 부호**: 코시 원소 $A_{i, j} = \frac{1}{(K + i) \oplus j}$를 적용한 $[I_K; A]$ 생성 행렬 기반. $\text{GF}(256)$ 가우스 소거법을 통해 $K + M$개 스트라이프 중 임의의 $K$개 온전한 조각만으로 모든 데이터 스트라이프를 완벽 복원.
+  - **스트라이프별 CRC-32 및 전체 SHA-256 바인딩**: 개별 스트라이프마다 독립적인 CRC-32 검증을 수행하여 손상 위치를 정밀 격리하고, 전체 컨테이너 복원 후 SHA-256 다이제스트로 최종 무결성 입증.
+  - **자가 치유 복구 명령 (`repair`)**: 손상된 스트라이프를 재구성하여 완전히 깨끗한 새 `.svault.asc` 문서를 재출력하거나 바이너리로 직통 추출(`--binary`)하며 상세 `--json` 진단 보고서 제공.
+  - **`dearmor` 시 투명한 자동 복원**: 복호화/해제 과정에서 데이터 스트라이프 손상이 감지되면 별도 복구 명령 없이도 코시 RS 소거 복원을 전자동 실행하여 원본 복원.
+  - **`inspect` 및 `audit` 자동 감지 연동**: 아머드 컨테이너의 스트라이프 구성 상태 및 CRC-32 무결성을 즉시 검사.
+- **범용 캐리어 용량 측정 (`capacity`)** — `.bmp`, `.wav`, `.png` 미디어의 전체 바이트, 순수 은닉 가용 용량, 12바이트 스테고 봉투 오버헤드를 정밀 계산하며 파이프라인 연동용 `--json` 출력 지원.
+- **컨테이너 헤더 검사 (`inspect`)** — 복호화 없이 `.svault`, `.png`, `.wav`, `.bmp` 파일의 컨테이너 버전, DPAPI 귀속 여부, 미끼 컨테이너 여부, 페이로드 크기, 솔트 값을 즉시 확인합니다 (은닉 슬롯의 크기는 은폐).
 - **다중 패스 완전 파쇄 (`shred`)** — 원본 평문 파일을 삭제할 때 `0x00` ➔ `0xFF` ➔ 난수 덮어쓰기 후 디스크 동기화 및 길이 0 절삭을 수행해 포렌식 복구를 차단합니다.
 
 ### 사용법 요약
@@ -246,50 +301,74 @@ svault embed-wav -c audio.wav -s secret.txt -o audio_lsb.wav -p "비밀번호" -
 # 7. WAV 오디오 파일에서 비밀 파일 추출 및 복호화
 svault extract-wav -c audio_lsb.wav -o recovered_audio.txt -p "비밀번호"
 
-# 8. 컨테이너 또는 스테고 미디어(.png, .wav) 메타데이터 조회
-svault inspect deniable.svault
+# 8. 스테가노그래피 캐리어 용량 측정 (.bmp, .wav, .png)
+svault capacity photo.bmp
+svault capacity audio.wav --json
 
-# 9. 원본 평문 파일 3-패스 완전 파쇄
+# 9. 24비트 BMP 이미지 속에 비밀 파일 픽셀 LSB 암호화 은닉
+svault embed-bmp -c photo.bmp -s secret.txt -o photo_lsb.bmp -p "비밀번호"
+
+# 10. BMP 이미지에서 비밀 파일 추출 후 안전 클립보드로 직접 복사 (15초 후 자동 소거)
+svault extract-bmp -c photo_lsb.bmp -p "비밀번호" --clip --clip-ttl 15
+
+# 11. 컨테이너 또는 스테고 미디어(.png, .wav, .bmp) 메타데이터 조회
+svault inspect photo_lsb.bmp
+
+# 12. 원본 평문 파일 3-패스 완전 파쇄
 svault shred secret.txt --passes 3
 
-# 10. 마스터 복구 키 또는 비밀값을 3-of-5 샤미르 조각(Shamir Shares)으로 분할
+# 13. 마스터 복구 키 또는 비밀값을 3-of-5 샤미르 조각(Shamir Shares)으로 분할
 svault split -s "마스터-복구-시드문구" -m 3 -n 5 -o shares/share
 
-# 11. 임의의 3개 조각을 결합하여 원본 비밀값 완벽 복원
+# 14. 임의의 3개 조각을 결합하여 원본 비밀값 완벽 복원
 svault combine shares/share_1.share shares/share_3.share shares/share_5.share -o restored.txt
 
-# 12. 비밀번호 강도, 섀넌 엔트로피 및 크랙 시간 정밀 감사
+# 15. 비밀번호 강도, 섀넌 엔트로피 및 크랙 시간 정밀 감사
 svault audit -p "안전한-비밀번호-문구-2026!"
 
-# 13. 스테고 이미지/오디오 파일 또는 컨테이너 이상 징후 분석
-svault audit photo_hidden.png --json
+# 16. 스테고 이미지/오디오 파일 또는 컨테이너 이상 징후 분석
+svault audit photo_lsb.bmp --json
 
-# 14. Base32 시크릿 또는 otpauth:// URI로 2FA 계정 등록
+# 17. Base32 시크릿 또는 otpauth:// URI로 2FA 계정 등록
 svault totp add github --secret "JBSWY3DPEHPK3PXP" --issuer "GitHub" --vault totp.svault -p "금고비밀번호"
 svault totp add --uri "otpauth://totp/Google:alice?secret=JBSWY3DPEHPK3PXP&issuer=Google" --vault totp.svault -p "금고비밀번호"
 
-# 15. 실시간 6자리 2FA 인증 코드 생성 (시각적 잔여시간 게이지 및 --json 지원)
+# 18. 실시간 6자리 2FA 인증 코드 생성 (시각적 잔여시간 게이지 및 --json 지원)
 svault totp code github --vault totp.svault -p "금고비밀번호"
 svault totp code github --vault totp.svault -p "금고비밀번호" --json
 
-# 16. 시간 오차 윈도우 기반 OTP 코드 검증 (+/- 1 스텝)
+# 19. 시간 오차 윈도우 기반 OTP 코드 검증 (+/- 1 스텝)
 svault totp verify github 123456 --skew 1 --vault totp.svault -p "금고비밀번호"
 
-# 17. 계정 목록 조회 및 otpauth:// URI 내보내기
+# 20. 계정 목록 조회 및 otpauth:// URI 내보내기
 svault totp list --vault totp.svault -p "금고비밀번호"
 svault totp export github --vault totp.svault -p "금고비밀번호"
 
-# 18. 15초 자동 만료 가드를 적용하여 비밀값을 클립보드에 안전 복사
+# 21. 15초 자동 만료 가드를 적용하여 비밀값을 클립보드에 안전 복사
 svault clip copy "초특급-비밀번호" --ttl 15
 svault clip copy "초특급-비밀번호" --ttl 15 --silent
 
-# 19. 클립보드 메타데이터 상태 확인 및 수동 즉시 완전 소거
+# 22. 클립보드 메타데이터 상태 확인 및 수동 즉시 완전 소거
 svault clip status
 svault clip clear
 
-# 20. 터미널 노출 및 디스크 평문 저장 없이 클립보드로 직통 복호화
+# 23. 터미널 노출 및 디스크 평문 저장 없이 클립보드로 직통 복호화
 svault decrypt -i secret.svault -p "금고비밀번호" --clip --clip-ttl 30
 svault totp code github --vault totp.svault -p "금고비밀번호" --clip --clip-ttl 15
+
+# 24. 코시 리드-솔로몬 패리티 스트라이프가 적용된 ASCII 아머드 파일(.svault.asc) 생성
+svault armor -i secret.svault -o secret.svault.asc -k 4 -m 2
+
+# 25. ASCII 아머드 파일을 원본 .svault 컨테이너로 복원
+svault dearmor -i secret.svault.asc -o recovered.svault
+
+# 26. 손상된 .svault.asc 파일 코시 리드-솔로몬 패리티로 자가 치유 복구
+svault repair -i corrupted.svault.asc -o repaired.svault.asc --json
+svault repair -i corrupted.svault.asc -o direct_recovered.svault --binary
+
+# 27. 아머드 컨테이너 스트라이프 상태 검사 및 무결성 감사
+svault inspect secret.svault.asc
+svault audit secret.svault.asc --json
 ```
 
 ### 저작권 및 라이선스

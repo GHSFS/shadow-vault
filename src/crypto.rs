@@ -15,6 +15,7 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
+use std::path::Path;
 use zeroize::{Zeroize, Zeroizing};
 
 pub const MAGIC: &[u8; 4] = b"SVLT";
@@ -38,23 +39,49 @@ pub struct ContainerInfo {
     pub policy: Option<PolicyHeader>,
 }
 
-/// Seal plaintext bytes into a `SVLT` v1 encrypted container with an optional time/expiration policy.
-pub fn seal_with_policy(
+/// Resolve cryptographic key material from an optional passphrase and optional keyfile path.
+///
+/// 1. Passphrase only (`keyfile == None`): returns raw `passphrase.as_bytes()` for 100% backward compatibility.
+/// 2. Keyfile + Passphrase (`keyfile == Some`, `passphrase == Some`): derives 32-byte HMAC-SHA256 seed.
+/// 3. Keyfile only (`keyfile == Some`, `passphrase == None` or empty): derives 32-byte HMAC-SHA256 seed.
+/// 4. Neither: returns `Error::Crypto("neither passphrase nor keyfile was provided")`.
+pub fn resolve_key_material(
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
+) -> Result<Zeroizing<Vec<u8>>> {
+    match (passphrase, keyfile) {
+        (Some(p), None) => {
+            if p.is_empty() {
+                return Err(Error::Crypto("passphrase must not be empty".into()));
+            }
+            Ok(Zeroizing::new(p.as_bytes().to_vec()))
+        }
+        (pass, Some(kf)) => {
+            let combined = crate::keyfile::combine_passphrase_and_keyfile(pass, kf)?;
+            Ok(Zeroizing::new(combined.to_vec()))
+        }
+        (None, None) => Err(Error::Crypto(
+            "neither passphrase nor keyfile was provided".into(),
+        )),
+    }
+}
+
+/// Seal plaintext bytes into a `SVLT` v1 encrypted container with an optional time/expiration policy and optional keyfile.
+pub fn seal_with_policy_and_keyfile(
     plaintext: &[u8],
-    passphrase: &str,
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
     bind_dpapi: bool,
     policy: Option<&PolicyHeader>,
 ) -> Result<Vec<u8>> {
-    if passphrase.is_empty() {
-        return Err(Error::Crypto("passphrase must not be empty".into()));
-    }
+    let key_material = resolve_key_material(passphrase, keyfile)?;
 
     let mut salt = [0u8; SALT_LEN];
     let mut nonce_bytes = [0u8; NONCE_LEN];
     rand::thread_rng().fill_bytes(&mut salt);
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
-    let key_bytes = derive_key(passphrase.as_bytes(), &salt)?;
+    let key_bytes = derive_key(&key_material, &salt)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(&nonce_bytes);
 
@@ -113,6 +140,27 @@ pub fn seal_with_policy(
     Ok(out)
 }
 
+/// Seal plaintext bytes into a `SVLT` v1 encrypted container with an optional time/expiration policy.
+pub fn seal_with_policy(
+    plaintext: &[u8],
+    passphrase: &str,
+    bind_dpapi: bool,
+    policy: Option<&PolicyHeader>,
+) -> Result<Vec<u8>> {
+    seal_with_policy_and_keyfile(plaintext, Some(passphrase), None, bind_dpapi, policy)
+}
+
+/// Seal plaintext bytes into a `SVLT` v1 encrypted container with optional keyfile.
+#[allow(dead_code)]
+pub fn seal_with_keyfile(
+    plaintext: &[u8],
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
+    bind_dpapi: bool,
+) -> Result<Vec<u8>> {
+    seal_with_policy_and_keyfile(plaintext, passphrase, keyfile, bind_dpapi, None)
+}
+
 /// Seal plaintext bytes into a `SVLT` v1 encrypted container.
 pub fn seal(plaintext: &[u8], passphrase: &str, bind_dpapi: bool) -> Result<Vec<u8>> {
     seal_with_policy(plaintext, passphrase, bind_dpapi, None)
@@ -123,11 +171,15 @@ pub fn open(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     open_at(container, passphrase, None)
 }
 
-/// Open a `SVLT` container and enforce policy validation at the specified UTC timestamp (or current time if None).
-pub fn open_at(container: &[u8], passphrase: &str, at_time: Option<u64>) -> Result<Vec<u8>> {
-    if passphrase.is_empty() {
-        return Err(Error::Crypto("passphrase must not be empty".into()));
-    }
+/// Open a `SVLT` container with keyfile and enforce policy validation at the specified UTC timestamp (or current time if None).
+pub fn open_at_with_keyfile(
+    container: &[u8],
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
+    at_time: Option<u64>,
+) -> Result<Vec<u8>> {
+    let key_material = resolve_key_material(passphrase, keyfile)?;
+
     if container.len() < HEADER_LEN + 16 {
         return Err(Error::Format(
             "container truncated or smaller than header".into(),
@@ -146,11 +198,12 @@ pub fn open_at(container: &[u8], passphrase: &str, at_time: Option<u64>) -> Resu
     }
     let flags = container[5];
     if (flags & FLAG_DECOY) != 0 {
-        return crate::decoy::open_decoy(container, passphrase).map(|r| r.into_bytes());
+        return crate::decoy::open_decoy_with_keyfile(container, passphrase, keyfile)
+            .map(|r| r.into_bytes());
     }
 
     if version == VERSION_V2 {
-        return crate::decoy::open_v2(container, passphrase);
+        return crate::decoy::open_v2_with_keyfile(container, passphrase, keyfile);
     }
 
     let salt = &container[6..6 + SALT_LEN];
@@ -190,7 +243,7 @@ pub fn open_at(container: &[u8], passphrase: &str, at_time: Option<u64>) -> Resu
         body.to_vec()
     };
 
-    let key_bytes = derive_key(passphrase.as_bytes(), salt)?;
+    let key_bytes = derive_key(&key_material, salt)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(nonce_bytes);
 
@@ -210,6 +263,21 @@ pub fn open_at(container: &[u8], passphrase: &str, at_time: Option<u64>) -> Resu
             Error::Crypto("authentication failed — wrong passphrase or tampered container".into())
         }),
     }
+}
+
+/// Open a `SVLT` container and enforce policy validation at the specified UTC timestamp (or current time if None).
+pub fn open_at(container: &[u8], passphrase: &str, at_time: Option<u64>) -> Result<Vec<u8>> {
+    open_at_with_keyfile(container, Some(passphrase), None, at_time)
+}
+
+/// Open a `SVLT` container with optional keyfile at the current time.
+#[allow(dead_code)]
+pub fn open_with_keyfile(
+    container: &[u8],
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
+) -> Result<Vec<u8>> {
+    open_at_with_keyfile(container, passphrase, keyfile, None)
 }
 
 /// Inspect a `SVLT` container header without decrypting it.

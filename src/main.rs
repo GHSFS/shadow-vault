@@ -11,6 +11,7 @@ mod clipboard_guard;
 mod crypto;
 mod decoy;
 mod error;
+mod keyfile;
 mod policy;
 mod shamir;
 mod shred;
@@ -20,7 +21,7 @@ mod wav;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, ClipAction, Commands, TotpAction};
+use cli::{Cli, ClipAction, Commands, KeyfileAction, TotpAction};
 use colored::Colorize;
 use std::fs;
 use std::io::{Read, Write};
@@ -80,6 +81,7 @@ fn main() -> Result<()> {
             input,
             output,
             passphrase,
+            keyfile,
             decoy,
             decoy_passphrase,
             padding,
@@ -104,11 +106,31 @@ fn main() -> Result<()> {
                 let raw_decoy = fs::read(&decoy_path).with_context(|| {
                     format!("failed to read decoy file: {}", decoy_path.display())
                 })?;
-                decoy::seal_decoy(&raw, &passphrase, &raw_decoy, &d_pass, dpapi, padding)?
+                decoy::seal_decoy_with_keyfile(
+                    &raw,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    &raw_decoy,
+                    &d_pass,
+                    dpapi,
+                    padding,
+                )?
             } else if padding > 0 {
-                decoy::seal_v2(&raw, &passphrase, dpapi, padding)?
+                decoy::seal_v2_with_keyfile(
+                    &raw,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    padding,
+                )?
             } else {
-                crypto::seal_with_policy(&raw, &passphrase, dpapi, policy.as_ref())?
+                crypto::seal_with_policy_and_keyfile(
+                    &raw,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    policy.as_ref(),
+                )?
             };
             fs::write(&output, &sealed)
                 .with_context(|| format!("failed to write container: {}", output.display()))?;
@@ -133,6 +155,7 @@ fn main() -> Result<()> {
             decoy,
             output,
             passphrase,
+            keyfile,
             decoy_passphrase,
             padding,
             dpapi,
@@ -141,9 +164,10 @@ fn main() -> Result<()> {
                 .with_context(|| format!("failed to read primary file: {}", primary.display()))?;
             let raw_decoy = fs::read(&decoy)
                 .with_context(|| format!("failed to read decoy file: {}", decoy.display()))?;
-            let sealed = decoy::seal_decoy(
+            let sealed = decoy::seal_decoy_with_keyfile(
                 &raw_primary,
-                &passphrase,
+                Some(&passphrase),
+                keyfile.as_deref(),
                 &raw_decoy,
                 &decoy_passphrase,
                 dpapi,
@@ -164,6 +188,7 @@ fn main() -> Result<()> {
             input,
             output,
             passphrase,
+            keyfile,
             decoy_passphrase,
             clip,
             clip_ttl,
@@ -173,6 +198,7 @@ fn main() -> Result<()> {
             input,
             output,
             passphrase,
+            keyfile,
             decoy_passphrase,
             clip,
             clip_ttl,
@@ -190,14 +216,38 @@ fn main() -> Result<()> {
             let at_time_val = parse_cli_at_time(at_time.as_deref())?;
             let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&container) {
-                    decoy::open_decoy_explicit(&container, passphrase.as_deref(), Some(&d_pass))?
+                    decoy::open_decoy_explicit_with_keyfile(
+                        &container,
+                        passphrase.as_deref(),
+                        keyfile.as_deref(),
+                        Some(&d_pass),
+                    )?
                 } else {
-                    crypto::open_at(&container, &d_pass, at_time_val)?
+                    crypto::open_at_with_keyfile(
+                        &container,
+                        Some(&d_pass),
+                        keyfile.as_deref(),
+                        at_time_val,
+                    )?
                 }
-            } else if let Some(p) = passphrase {
-                crypto::open_at(&container, &p, at_time_val)?
+            } else if crypto::is_decoy_container(&container) {
+                decoy::open_decoy_explicit_with_keyfile(
+                    &container,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    None,
+                )?
+            } else if passphrase.is_some() || keyfile.is_some() {
+                crypto::open_at_with_keyfile(
+                    &container,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    at_time_val,
+                )?
             } else {
-                anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
+                anyhow::bail!(
+                    "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
+                );
             };
             if let Some(ref out_path) = output {
                 fs::write(out_path, &plain)
@@ -239,6 +289,7 @@ fn main() -> Result<()> {
             secret,
             output,
             passphrase,
+            keyfile,
             decoy,
             decoy_passphrase,
             padding,
@@ -265,18 +316,31 @@ fn main() -> Result<()> {
                 let raw_decoy = fs::read(&decoy_path).with_context(|| {
                     format!("failed to read decoy file: {}", decoy_path.display())
                 })?;
-                decoy::seal_decoy(
+                decoy::seal_decoy_with_keyfile(
                     &raw_secret,
-                    &passphrase,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
                     &raw_decoy,
                     &d_pass,
                     dpapi,
                     padding,
                 )?
             } else if padding > 0 {
-                decoy::seal_v2(&raw_secret, &passphrase, dpapi, padding)?
+                decoy::seal_v2_with_keyfile(
+                    &raw_secret,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    padding,
+                )?
             } else {
-                crypto::seal_with_policy(&raw_secret, &passphrase, dpapi, policy.as_ref())?
+                crypto::seal_with_policy_and_keyfile(
+                    &raw_secret,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    policy.as_ref(),
+                )?
             };
             let stego_png = stego::embed_in_png(&png, &sealed)?;
             fs::write(&output, &stego_png)
@@ -292,6 +356,7 @@ fn main() -> Result<()> {
             carrier,
             output,
             passphrase,
+            keyfile,
             decoy_passphrase,
             clip,
             clip_ttl,
@@ -303,14 +368,38 @@ fn main() -> Result<()> {
             let at_time_val = parse_cli_at_time(at_time.as_deref())?;
             let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&sealed) {
-                    decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
+                    decoy::open_decoy_explicit_with_keyfile(
+                        &sealed,
+                        passphrase.as_deref(),
+                        keyfile.as_deref(),
+                        Some(&d_pass),
+                    )?
                 } else {
-                    crypto::open_at(&sealed, &d_pass, at_time_val)?
+                    crypto::open_at_with_keyfile(
+                        &sealed,
+                        Some(&d_pass),
+                        keyfile.as_deref(),
+                        at_time_val,
+                    )?
                 }
-            } else if let Some(p) = passphrase {
-                crypto::open_at(&sealed, &p, at_time_val)?
+            } else if crypto::is_decoy_container(&sealed) {
+                decoy::open_decoy_explicit_with_keyfile(
+                    &sealed,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    None,
+                )?
+            } else if passphrase.is_some() || keyfile.is_some() {
+                crypto::open_at_with_keyfile(
+                    &sealed,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    at_time_val,
+                )?
             } else {
-                anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
+                anyhow::bail!(
+                    "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
+                );
             };
             if let Some(ref out_path) = output {
                 fs::write(out_path, &plain).with_context(|| {
@@ -353,6 +442,7 @@ fn main() -> Result<()> {
             secret,
             output,
             passphrase,
+            keyfile,
             mode,
             lsb,
             decoy,
@@ -381,18 +471,31 @@ fn main() -> Result<()> {
                 let raw_decoy = fs::read(&decoy_path).with_context(|| {
                     format!("failed to read decoy file: {}", decoy_path.display())
                 })?;
-                decoy::seal_decoy(
+                decoy::seal_decoy_with_keyfile(
                     &raw_secret,
-                    &passphrase,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
                     &raw_decoy,
                     &d_pass,
                     dpapi,
                     padding,
                 )?
             } else if padding > 0 {
-                decoy::seal_v2(&raw_secret, &passphrase, dpapi, padding)?
+                decoy::seal_v2_with_keyfile(
+                    &raw_secret,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    padding,
+                )?
             } else {
-                crypto::seal_with_policy(&raw_secret, &passphrase, dpapi, policy.as_ref())?
+                crypto::seal_with_policy_and_keyfile(
+                    &raw_secret,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    policy.as_ref(),
+                )?
             };
             let effective_mode = if lsb { wav::WavMode::Lsb } else { mode };
             let stego_wav = wav::embed_in_wav(&wav_bytes, &sealed, effective_mode)?;
@@ -410,6 +513,7 @@ fn main() -> Result<()> {
             carrier,
             output,
             passphrase,
+            keyfile,
             decoy_passphrase,
             mode,
             lsb,
@@ -424,14 +528,38 @@ fn main() -> Result<()> {
             let at_time_val = parse_cli_at_time(at_time.as_deref())?;
             let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&sealed) {
-                    decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
+                    decoy::open_decoy_explicit_with_keyfile(
+                        &sealed,
+                        passphrase.as_deref(),
+                        keyfile.as_deref(),
+                        Some(&d_pass),
+                    )?
                 } else {
-                    crypto::open_at(&sealed, &d_pass, at_time_val)?
+                    crypto::open_at_with_keyfile(
+                        &sealed,
+                        Some(&d_pass),
+                        keyfile.as_deref(),
+                        at_time_val,
+                    )?
                 }
-            } else if let Some(p) = passphrase {
-                crypto::open_at(&sealed, &p, at_time_val)?
+            } else if crypto::is_decoy_container(&sealed) {
+                decoy::open_decoy_explicit_with_keyfile(
+                    &sealed,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    None,
+                )?
+            } else if passphrase.is_some() || keyfile.is_some() {
+                crypto::open_at_with_keyfile(
+                    &sealed,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    at_time_val,
+                )?
             } else {
-                anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
+                anyhow::bail!(
+                    "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
+                );
             };
             if let Some(ref out_path) = output {
                 fs::write(out_path, &plain).with_context(|| {
@@ -474,6 +602,7 @@ fn main() -> Result<()> {
             secret,
             output,
             passphrase,
+            keyfile,
             decoy,
             decoy_passphrase,
             padding,
@@ -500,18 +629,31 @@ fn main() -> Result<()> {
                 let raw_decoy = fs::read(&decoy_path).with_context(|| {
                     format!("failed to read decoy file: {}", decoy_path.display())
                 })?;
-                decoy::seal_decoy(
+                decoy::seal_decoy_with_keyfile(
                     &raw_secret,
-                    &passphrase,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
                     &raw_decoy,
                     &d_pass,
                     dpapi,
                     padding,
                 )?
             } else if padding > 0 {
-                decoy::seal_v2(&raw_secret, &passphrase, dpapi, padding)?
+                decoy::seal_v2_with_keyfile(
+                    &raw_secret,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    padding,
+                )?
             } else {
-                crypto::seal_with_policy(&raw_secret, &passphrase, dpapi, policy.as_ref())?
+                crypto::seal_with_policy_and_keyfile(
+                    &raw_secret,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    policy.as_ref(),
+                )?
             };
             let stego_bmp = bmp::embed_in_bmp(&bmp_bytes, &sealed)?;
             fs::write(&output, &stego_bmp)
@@ -527,6 +669,7 @@ fn main() -> Result<()> {
             carrier,
             output,
             passphrase,
+            keyfile,
             decoy_passphrase,
             clip,
             clip_ttl,
@@ -538,14 +681,38 @@ fn main() -> Result<()> {
             let at_time_val = parse_cli_at_time(at_time.as_deref())?;
             let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&sealed) {
-                    decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
+                    decoy::open_decoy_explicit_with_keyfile(
+                        &sealed,
+                        passphrase.as_deref(),
+                        keyfile.as_deref(),
+                        Some(&d_pass),
+                    )?
                 } else {
-                    crypto::open_at(&sealed, &d_pass, at_time_val)?
+                    crypto::open_at_with_keyfile(
+                        &sealed,
+                        Some(&d_pass),
+                        keyfile.as_deref(),
+                        at_time_val,
+                    )?
                 }
-            } else if let Some(p) = passphrase {
-                crypto::open_at(&sealed, &p, at_time_val)?
+            } else if crypto::is_decoy_container(&sealed) {
+                decoy::open_decoy_explicit_with_keyfile(
+                    &sealed,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    None,
+                )?
+            } else if passphrase.is_some() || keyfile.is_some() {
+                crypto::open_at_with_keyfile(
+                    &sealed,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    at_time_val,
+                )?
             } else {
-                anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
+                anyhow::bail!(
+                    "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
+                );
             };
             if let Some(ref out_path) = output {
                 fs::write(out_path, &plain).with_context(|| {
@@ -1242,6 +1409,7 @@ fn main() -> Result<()> {
             input,
             output,
             mut passphrase,
+            keyfile,
             dpapi,
             armor,
             carrier,
@@ -1255,7 +1423,8 @@ fn main() -> Result<()> {
             handle_pack_dir_command(
                 &input,
                 &output,
-                &passphrase,
+                passphrase.as_deref(),
+                keyfile.as_deref(),
                 dpapi,
                 armor,
                 carrier.as_deref(),
@@ -1266,12 +1435,15 @@ fn main() -> Result<()> {
                 policy_desc.as_deref(),
                 json,
             )?;
-            passphrase.zeroize();
+            if let Some(ref mut p) = passphrase {
+                p.zeroize();
+            }
         }
         Commands::UnpackDir {
             input,
             output,
             mut passphrase,
+            keyfile,
             list,
             verify_only,
             overwrite,
@@ -1282,6 +1454,7 @@ fn main() -> Result<()> {
                 &input,
                 output.as_deref(),
                 passphrase.as_deref(),
+                keyfile.as_deref(),
                 list,
                 verify_only,
                 overwrite,
@@ -1291,6 +1464,9 @@ fn main() -> Result<()> {
             if let Some(ref mut p) = passphrase {
                 p.zeroize();
             }
+        }
+        Commands::Keyfile { action } => {
+            handle_keyfile_command(action)?;
         }
     }
 
@@ -1882,7 +2058,8 @@ fn print_carrier_audit(rep: &audit::FileAuditReport) {
 fn handle_pack_dir_command(
     input: &Path,
     output: &Path,
-    passphrase: &str,
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
     dpapi: bool,
     armor: bool,
     carrier: Option<&Path>,
@@ -1893,8 +2070,8 @@ fn handle_pack_dir_command(
     policy_desc: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    if passphrase.is_empty() {
-        anyhow::bail!("passphrase must not be empty");
+    if passphrase.is_none() && keyfile.is_none() {
+        anyhow::bail!("either --passphrase or --keyfile must be provided");
     }
 
     let archive_bytes = archive::pack_directory(input)?;
@@ -1923,7 +2100,13 @@ fn handle_pack_dir_command(
         }
     }
 
-    let sealed = crypto::seal_with_policy(&archive_bytes, passphrase, dpapi, policy.as_ref())?;
+    let sealed = crypto::seal_with_policy_and_keyfile(
+        &archive_bytes,
+        passphrase,
+        keyfile,
+        dpapi,
+        policy.as_ref(),
+    )?;
 
     if let Some(carrier_path) = carrier {
         let carrier_bytes = fs::read(carrier_path)
@@ -1983,15 +2166,15 @@ fn handle_unpack_dir_command(
     input: &Path,
     output: Option<&Path>,
     passphrase: Option<&str>,
+    keyfile: Option<&Path>,
     list: bool,
     verify_only: bool,
     overwrite: bool,
     at_time: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    let pass = passphrase.ok_or_else(|| anyhow::anyhow!("--passphrase is required"))?;
-    if pass.is_empty() {
-        anyhow::bail!("passphrase must not be empty");
+    if passphrase.is_none() && keyfile.is_none() {
+        anyhow::bail!("either --passphrase or --keyfile must be provided");
     }
 
     let raw_bytes = fs::read(input)
@@ -2013,7 +2196,7 @@ fn handle_unpack_dir_command(
     };
 
     let at_time_val = parse_cli_at_time(at_time)?;
-    let plain = crypto::open_at(&container, pass, at_time_val)?;
+    let plain = crypto::open_at_with_keyfile(&container, passphrase, keyfile, at_time_val)?;
 
     if list {
         let summary = archive::list_archive(&plain)?;
@@ -2081,5 +2264,34 @@ fn handle_unpack_dir_command(
         );
     }
 
+    Ok(())
+}
+
+fn handle_keyfile_command(action: KeyfileAction) -> Result<()> {
+    match action {
+        KeyfileAction::Generate { output, bytes } => {
+            keyfile::generate_keyfile(&output, bytes)?;
+            let fp = keyfile::keyfile_fingerprint(&output)?;
+            println!(
+                "{} generated cryptographic keyfile -> {} ({} bytes, fingerprint: {})",
+                "ok".green().bold(),
+                output.display(),
+                bytes,
+                fp
+            );
+        }
+        KeyfileAction::Inspect { path, json } => {
+            let info = keyfile::inspect_keyfile(&path)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&info)?);
+            } else {
+                println!("{}", info.display_summary());
+            }
+        }
+        KeyfileAction::Fingerprint { path } => {
+            let fp = keyfile::keyfile_fingerprint(&path)?;
+            println!("{fp}");
+        }
+    }
     Ok(())
 }

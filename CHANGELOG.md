@@ -5,6 +5,27 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-10-13
+
+### Added
+- Keyfile + Passphrase Two-Factor Key Derivation engine (`src/keyfile.rs`).
+- Streaming 64 KiB HMAC-SHA256 pre-hashing:
+  - Constant memory footprint regardless of keyfile size, streaming files of arbitrary length (16 bytes up to multi-megabyte hardware dumps) through a 64 KiB `Zeroizing` buffer.
+  - Two-factor authentication (2FA) key derivation: `HMAC-SHA256(key = passphrase, data = "shadow-vault:keyfile-v1:" || keyfile_stream)`, producing a 256-bit high-entropy seed fed into Argon2id.
+  - Keyfile-only derivation mode: applies domain separator `b"shadow-vault:keyfile-only:v1"`, enabling passwordless hardware-bound vault operations.
+  - Strict validation: rejects empty (0-byte) keyfiles, directory paths, and nonexistent files with descriptive errors.
+- Dedicated `keyfile` management CLI command (`svault keyfile`):
+  - `svault keyfile generate -o <path> [--bytes 64]`: generates cryptographically secure random keyfiles using OS CSPRNG (`rand::rngs::OsRng`).
+  - `svault keyfile inspect <path> [--json]`: audits keyfile size, SHA-256 fingerprint, and Shannon entropy with sample-size normalization.
+  - `svault keyfile fingerprint <path>`: prints raw `SHA256:<hex>` fingerprint for verification without leaking key material.
+- Universal CLI integration:
+  - Added `-k` / `--keyfile <path>` flag to `encrypt`, `decrypt`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `pack-dir`, `unpack-dir`, and decoy vaults.
+  - Made `--passphrase` optional when `--keyfile` is present on `encrypt`, `embed`, and `pack-dir`, enabling keyfile-only encryption.
+- Proactive memory zeroization:
+  - Intermediate key blocks, inner/outer HMAC buffers, stream chunks, and final combined secrets are zeroized upon drop via `zeroize::Zeroizing`.
+- Comprehensive domain integration test suite (`tests/keyfile_test.rs`):
+  - 7 integration tests covering CLI generation, inspection, 2FA roundtrip, keyfile-only mode, wrong keyfile rejection, wrong passphrase rejection, 1-bit tamper detection, empty file rejection, stego PNG carrier with 2FA, and directory packing with 2FA (100% pass).
+
 ## [0.11.0] - 2026-10-13
 
 ### Added

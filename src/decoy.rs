@@ -20,6 +20,7 @@ use crate::error::{Error, Result};
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::RngCore;
+use std::path::Path;
 use zeroize::Zeroizing;
 
 pub const DECOY_HEADER_LEN: usize = HEADER_LEN + 4; // 34 + 4 = 38 bytes
@@ -103,24 +104,26 @@ impl AsRef<[u8]> for DecoyOpenResult {
 /// If `padding_bytes` is greater than 0, at least that amount of CSPRNG padding is appended
 /// to the primary payload inside the hidden slot; otherwise, standard 256-byte alignment
 /// padding is generated.
-pub fn seal_decoy(
+pub fn seal_decoy_with_keyfile(
     primary_secret: &[u8],
-    primary_passphrase: &str,
+    primary_passphrase: Option<&str>,
+    primary_keyfile: Option<&Path>,
     decoy_secret: &[u8],
     decoy_passphrase: &str,
     bind_dpapi: bool,
     padding_bytes: usize,
 ) -> Result<Vec<u8>> {
-    if primary_passphrase.is_empty() {
-        return Err(Error::Crypto("primary passphrase must not be empty".into()));
-    }
+    let primary_key_material =
+        crate::crypto::resolve_key_material(primary_passphrase, primary_keyfile)?;
     if decoy_passphrase.is_empty() {
         return Err(Error::Crypto("decoy passphrase must not be empty".into()));
     }
-    if primary_passphrase == decoy_passphrase {
-        return Err(Error::Crypto(
-            "primary and decoy passphrases must be distinct for plausible deniability".into(),
-        ));
+    if let Some(p) = primary_passphrase {
+        if p == decoy_passphrase && primary_keyfile.is_none() {
+            return Err(Error::Crypto(
+                "primary and decoy passphrases must be distinct for plausible deniability".into(),
+            ));
+        }
     }
 
     // 1. Prepare Decoy Slot
@@ -166,7 +169,6 @@ pub fn seal_decoy(
     let inner_len = hidden_inner.len() as u32;
 
     // Frame hidden plaintext: [4-byte LE inner_len][inner_bytes][random padding]
-    // Padding ensures the slot size is aligned and indistinguishable from random noise
     let unpadded_len = 4usize
         .checked_add(hidden_inner.len())
         .ok_or_else(|| Error::Crypto("primary payload size overflow".into()))?;
@@ -190,7 +192,7 @@ pub fn seal_decoy(
     rand::thread_rng().fill_bytes(&mut pad_bytes);
     hidden_plain.extend_from_slice(&pad_bytes);
 
-    let hidden_key = derive_key(primary_passphrase.as_bytes(), &hidden_salt)?;
+    let hidden_key = derive_key(&primary_key_material, &hidden_salt)?;
     let hidden_cipher = ChaCha20Poly1305::new(Key::from_slice(&*hidden_key));
     let hidden_nonce = Nonce::from_slice(&hidden_nonce_bytes);
 
@@ -224,16 +226,35 @@ pub fn seal_decoy(
     Ok(out)
 }
 
-/// Seal a single payload into a v2 container with explicit or aligned random padding.
-pub fn seal_v2(
-    plaintext: &[u8],
-    passphrase: &str,
+#[allow(dead_code)]
+pub fn seal_decoy(
+    primary_secret: &[u8],
+    primary_passphrase: &str,
+    decoy_secret: &[u8],
+    decoy_passphrase: &str,
     bind_dpapi: bool,
     padding_bytes: usize,
 ) -> Result<Vec<u8>> {
-    if passphrase.is_empty() {
-        return Err(Error::Crypto("passphrase must not be empty".into()));
-    }
+    seal_decoy_with_keyfile(
+        primary_secret,
+        Some(primary_passphrase),
+        None,
+        decoy_secret,
+        decoy_passphrase,
+        bind_dpapi,
+        padding_bytes,
+    )
+}
+
+/// Seal a single payload into a v2 container with explicit or aligned random padding and optional keyfile.
+pub fn seal_v2_with_keyfile(
+    plaintext: &[u8],
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
+    bind_dpapi: bool,
+    padding_bytes: usize,
+) -> Result<Vec<u8>> {
+    let key_material = crate::crypto::resolve_key_material(passphrase, keyfile)?;
 
     let mut salt = [0u8; SALT_LEN];
     let mut nonce_bytes = [0u8; NONCE_LEN];
@@ -274,7 +295,7 @@ pub fn seal_v2(
     rand::thread_rng().fill_bytes(&mut pad_bytes);
     plain.extend_from_slice(&pad_bytes);
 
-    let key = derive_key(passphrase.as_bytes(), &salt)?;
+    let key = derive_key(&key_material, &salt)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key));
     let nonce = Nonce::from_slice(&nonce_bytes);
 
@@ -295,11 +316,25 @@ pub fn seal_v2(
     Ok(out)
 }
 
-/// Open a v2 single-payload padded container.
-pub fn open_v2(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
-    if passphrase.is_empty() {
-        return Err(Error::Crypto("passphrase must not be empty".into()));
-    }
+/// Seal a single payload into a v2 container with explicit or aligned random padding.
+#[allow(dead_code)]
+pub fn seal_v2(
+    plaintext: &[u8],
+    passphrase: &str,
+    bind_dpapi: bool,
+    padding_bytes: usize,
+) -> Result<Vec<u8>> {
+    seal_v2_with_keyfile(plaintext, Some(passphrase), None, bind_dpapi, padding_bytes)
+}
+
+/// Open a v2 single-payload padded container with optional keyfile.
+pub fn open_v2_with_keyfile(
+    container: &[u8],
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
+) -> Result<Vec<u8>> {
+    let key_material = crate::crypto::resolve_key_material(passphrase, keyfile)?;
+
     if container.len() < HEADER_LEN + 4 + 16 {
         return Err(Error::Format(
             "container truncated or smaller than header".into(),
@@ -326,7 +361,7 @@ pub fn open_v2(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     let nonce_bytes = &container[6 + SALT_LEN..HEADER_LEN];
     let ciphertext = &container[HEADER_LEN..];
 
-    let key_bytes = derive_key(passphrase.as_bytes(), salt)?;
+    let key_bytes = derive_key(&key_material, salt)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(nonce_bytes);
 
@@ -363,43 +398,46 @@ pub fn open_v2(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     }
 }
 
-/// Seamlessly open a plausible deniability container.
-///
-/// Attempts to decrypt the plausible decoy slot first (coercion resistance and side-channel defense);
-/// if authentication fails, attempts to decrypt the hidden primary slot.
-pub fn open_decoy(container: &[u8], passphrase: &str) -> Result<DecoyOpenResult> {
-    if passphrase.is_empty() {
-        return Err(Error::Crypto("passphrase must not be empty".into()));
-    }
+/// Open a v2 single-payload padded container.
+#[allow(dead_code)]
+pub fn open_v2(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    open_v2_with_keyfile(container, Some(passphrase), None)
+}
 
+/// Seamlessly open a plausible deniability container with optional keyfile.
+///
+/// Attempts to decrypt the plausible decoy slot first if a non-empty passphrase was supplied;
+/// if authentication fails or if only keyfile is supplied, attempts to decrypt the hidden primary slot.
+pub fn open_decoy_with_keyfile(
+    container: &[u8],
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
+) -> Result<DecoyOpenResult> {
     validate_decoy_header(container)?;
     parse_decoy_body_len(container)?;
 
-    // Attempt 1: Plausible decoy slot
-    // Probing decoy slot first ensures operators surrendering the decoy passphrase under coercion
-    // decrypt with minimal delay and zero timing-side-channel indication that a hidden primary slot exists.
-    let decoy_res = open_decoy_slot(container, passphrase);
-    if let Ok(decoy) = decoy_res {
-        return Ok(DecoyOpenResult::Decoy(decoy));
-    }
-
-    // If hardware binding failed, short-circuit immediately since primary slot also requires DPAPI.
-    if let Err(Error::Dpapi(e)) = decoy_res {
-        return Err(Error::Dpapi(e));
-    }
-    // If decoy slot has structural format corruption, short-circuit immediately.
-    if let Err(Error::Format(e)) = decoy_res {
-        return Err(Error::Format(e));
+    // Attempt 1: Plausible decoy slot if passphrase provided
+    if let Some(p) = passphrase {
+        if !p.is_empty() {
+            let decoy_res = open_decoy_slot(container, p);
+            if let Ok(decoy) = decoy_res {
+                return Ok(DecoyOpenResult::Decoy(decoy));
+            }
+            if let Err(Error::Dpapi(e)) = decoy_res {
+                return Err(Error::Dpapi(e));
+            }
+            if let Err(Error::Format(e)) = decoy_res {
+                return Err(Error::Format(e));
+            }
+        }
     }
 
     // Attempt 2: Hidden primary slot
-    let primary_res = open_primary_slot(container, passphrase);
+    let primary_res = open_primary_slot_with_keyfile(container, passphrase, keyfile);
     if let Ok(primary) = primary_res {
         return Ok(DecoyOpenResult::Primary(primary));
     }
 
-    // Surface DPAPI errors explicitly so operators know hardware binding rejected the container
-    // rather than misattributing failures to incorrect passphrases.
     if let Err(Error::Dpapi(e)) = primary_res {
         return Err(Error::Dpapi(e));
     }
@@ -412,10 +450,17 @@ pub fn open_decoy(container: &[u8], passphrase: &str) -> Result<DecoyOpenResult>
     ))
 }
 
-/// Open a plausible deniability container with explicit options for primary or decoy passphrases.
-pub fn open_decoy_explicit(
+/// Seamlessly open a plausible deniability container.
+#[allow(dead_code)]
+pub fn open_decoy(container: &[u8], passphrase: &str) -> Result<DecoyOpenResult> {
+    open_decoy_with_keyfile(container, Some(passphrase), None)
+}
+
+/// Open a plausible deniability container with explicit options for primary or decoy passphrases and keyfile.
+pub fn open_decoy_explicit_with_keyfile(
     container: &[u8],
     passphrase: Option<&str>,
+    keyfile: Option<&Path>,
     decoy_passphrase: Option<&str>,
 ) -> Result<Vec<u8>> {
     if let Some(decoy_p) = decoy_passphrase {
@@ -425,16 +470,23 @@ pub fn open_decoy_explicit(
         return open_decoy_payload(container, decoy_p);
     }
 
-    if let Some(p) = passphrase {
-        if p.is_empty() {
-            return Err(Error::Crypto("passphrase must not be empty".into()));
-        }
-        return open_decoy(container, p).map(|r| r.into_bytes());
+    if passphrase.is_some() || keyfile.is_some() {
+        return open_decoy_with_keyfile(container, passphrase, keyfile).map(|r| r.into_bytes());
     }
 
     Err(Error::Crypto(
-        "either --passphrase or --decoy-passphrase must be provided".into(),
+        "either --passphrase, --keyfile, or --decoy-passphrase must be provided".into(),
     ))
+}
+
+/// Open a plausible deniability container with explicit options for primary or decoy passphrases.
+#[allow(dead_code)]
+pub fn open_decoy_explicit(
+    container: &[u8],
+    passphrase: Option<&str>,
+    decoy_passphrase: Option<&str>,
+) -> Result<Vec<u8>> {
+    open_decoy_explicit_with_keyfile(container, passphrase, None, decoy_passphrase)
 }
 
 /// Attempt to open specifically the primary hidden slot.
@@ -449,11 +501,13 @@ pub fn open_decoy_payload(container: &[u8], passphrase: &str) -> Result<Vec<u8>>
     open_decoy_slot(container, passphrase)
 }
 
-/// Attempt to open specifically the primary hidden slot (internal helper).
-pub fn open_primary_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
-    if passphrase.is_empty() {
-        return Err(Error::Crypto("passphrase must not be empty".into()));
-    }
+/// Attempt to open specifically the primary hidden slot with optional keyfile.
+pub fn open_primary_slot_with_keyfile(
+    container: &[u8],
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
+) -> Result<Vec<u8>> {
+    let key_material = crate::crypto::resolve_key_material(passphrase, keyfile)?;
     validate_decoy_header(container)?;
 
     let decoy_body_len = parse_decoy_body_len(container)?;
@@ -474,7 +528,7 @@ pub fn open_primary_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> 
         return Err(Error::Format("hidden slot ciphertext truncated".into()));
     }
 
-    let key_bytes = derive_key(passphrase.as_bytes(), hidden_salt)?;
+    let key_bytes = derive_key(&key_material, hidden_salt)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(hidden_nonce_bytes);
 
@@ -510,6 +564,11 @@ pub fn open_primary_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> 
     } else {
         Ok(inner.to_vec())
     }
+}
+
+/// Attempt to open specifically the primary hidden slot (internal helper).
+pub fn open_primary_slot(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    open_primary_slot_with_keyfile(container, Some(passphrase), None)
 }
 
 /// Attempt to open specifically the plausible decoy slot (internal helper).

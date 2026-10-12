@@ -31,8 +31,12 @@ pub enum Commands {
         output: PathBuf,
 
         /// Encryption passphrase
-        #[arg(short, long)]
-        passphrase: String,
+        #[arg(short, long, required_unless_present = "keyfile")]
+        passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only encryption
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
 
         /// Optional decoy file to create a plausible deniability container
         #[arg(short = 'd', long = "decoy", requires = "decoy_passphrase")]
@@ -86,6 +90,10 @@ pub enum Commands {
         #[arg(short = 'p', long = "passphrase")]
         passphrase: String,
 
+        /// Optional external keyfile bound to primary secret
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
         /// Decoy passphrase (reveals only decoy file)
         #[arg(long = "decoy-passphrase")]
         decoy_passphrase: String,
@@ -113,6 +121,10 @@ pub enum Commands {
         /// Decryption passphrase (unlocks either primary or decoy automatically)
         #[arg(short, long)]
         passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only decryption
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
 
         /// Explicit decoy passphrase
         #[arg(long = "decoy-passphrase")]
@@ -145,6 +157,10 @@ pub enum Commands {
         /// Decryption passphrase (unlocks either primary or decoy automatically)
         #[arg(short, long)]
         passphrase: Option<String>,
+
+        /// Optional external keyfile bound to primary secret
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
 
         /// Explicit decoy passphrase
         #[arg(long = "decoy-passphrase")]
@@ -179,8 +195,12 @@ pub enum Commands {
         output: PathBuf,
 
         /// Encryption passphrase
-        #[arg(short, long)]
-        passphrase: String,
+        #[arg(short, long, required_unless_present = "keyfile")]
+        passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only encryption
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
 
         /// Optional decoy file to create a plausible deniability container
         #[arg(short = 'd', long = "decoy", requires = "decoy_passphrase")]
@@ -230,6 +250,10 @@ pub enum Commands {
         #[arg(short, long)]
         passphrase: Option<String>,
 
+        /// Optional external keyfile for 2FA or keyfile-only extraction
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
         /// Explicit decoy passphrase
         #[arg(long = "decoy-passphrase")]
         decoy_passphrase: Option<String>,
@@ -263,8 +287,12 @@ pub enum Commands {
         output: PathBuf,
 
         /// Encryption passphrase
-        #[arg(short, long)]
-        passphrase: String,
+        #[arg(short, long, required_unless_present = "keyfile")]
+        passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only encryption
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
 
         /// Steganography mode (chunk or lsb)
         #[arg(short, long, value_enum, default_value_t = crate::wav::WavMode::Chunk)]
@@ -322,6 +350,10 @@ pub enum Commands {
         #[arg(short, long)]
         passphrase: Option<String>,
 
+        /// Optional external keyfile for 2FA or keyfile-only extraction
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
         /// Explicit decoy passphrase
         #[arg(long = "decoy-passphrase")]
         decoy_passphrase: Option<String>,
@@ -363,8 +395,12 @@ pub enum Commands {
         output: PathBuf,
 
         /// Encryption passphrase
-        #[arg(short, long)]
-        passphrase: String,
+        #[arg(short, long, required_unless_present = "keyfile")]
+        passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only encryption
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
 
         /// Optional decoy file to create a plausible deniability container
         #[arg(short = 'd', long = "decoy", requires = "decoy_passphrase")]
@@ -413,6 +449,10 @@ pub enum Commands {
         /// Decryption passphrase (unlocks either primary or decoy automatically)
         #[arg(short, long)]
         passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only extraction
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
 
         /// Explicit decoy passphrase
         #[arg(long = "decoy-passphrase")]
@@ -641,8 +681,12 @@ pub enum Commands {
         output: PathBuf,
 
         /// Encryption passphrase
-        #[arg(short, long)]
-        passphrase: String,
+        #[arg(short, long, required_unless_present = "keyfile")]
+        passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only encryption
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
 
         /// Bind container to current Windows user/machine via DPAPI
         #[arg(long)]
@@ -696,6 +740,10 @@ pub enum Commands {
         #[arg(short, long)]
         passphrase: Option<String>,
 
+        /// Optional external keyfile for 2FA or keyfile-only decryption
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
         /// List archive contents without extracting
         #[arg(short, long)]
         list: bool,
@@ -715,6 +763,46 @@ pub enum Commands {
         /// Output archive listing or verification report in structured JSON format
         #[arg(long)]
         json: bool,
+    },
+
+    /// Manage cryptographic keyfiles for two-factor (2FA) container sealing
+    #[command(name = "keyfile")]
+    Keyfile {
+        #[command(subcommand)]
+        action: KeyfileAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum KeyfileAction {
+    /// Generate a cryptographically secure random keyfile
+    #[command(visible_alias = "gen")]
+    Generate {
+        /// Output path for the generated keyfile
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Keyfile size in bytes (min: 16, max: 1048576, default: 64)
+        #[arg(short, long, default_value_t = 64)]
+        bytes: usize,
+    },
+
+    /// Inspect a keyfile's size, SHA-256 fingerprint, and Shannon entropy
+    Inspect {
+        /// Path to the keyfile to inspect
+        #[arg(value_name = "KEYFILE")]
+        path: PathBuf,
+
+        /// Output inspection report in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Calculate and display SHA-256 fingerprint of a keyfile
+    Fingerprint {
+        /// Path to the keyfile
+        #[arg(value_name = "KEYFILE")]
+        path: PathBuf,
     },
 }
 

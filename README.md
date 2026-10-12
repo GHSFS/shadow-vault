@@ -30,7 +30,8 @@
 8. **Auto-Expiring Clipboard Guard (`src/clipboard_guard.rs`)** — securely copies decrypted secrets, passwords, or TOTP tokens to the Windows clipboard with automatic suppression of Windows 10/11 Clipboard History and Cloud Sync (`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`). Automatically wipes the clipboard after a configurable TTL (e.g., `--clip-ttl 15`) with constant-time SHA-256 fingerprint matching to avoid overwriting user clipboard changes made subsequently (`svault clip copy`, `svault clip paste`, `svault clip clear`, `svault clip status`, or `--clip` across decryption/extraction commands).
 9. **Reed-Solomon / Parity Error-Correcting Armor (`src/armor.rs`)** — adds block parity recovery stripes and ASCII-armored `.svault.asc` export/import so containers survive partial bit rot or text transmission corruptions. Employs a Cauchy generator matrix $[I_K; A]$ over $\text{GF}(256)$ guaranteeing Maximum Distance Separable (MDS) erasure correction: ANY $K$ intact shards out of $K + M$ total stripes can reconstruct all original data shards. Supports automated corruption detection, self-healing document repair (`svault repair`), auto-detection in `inspect` and `audit`, and auto-expiring clipboard guard (`svault armor`, `svault dearmor`, `svault repair`).
 10. **Directory & Multi-File Manifest Packing (`src/archive.rs`)** — packs entire directory trees with relative path canonicalization, multi-layered Zip Slip / path traversal prevention, zip bomb defense, per-file SHA-256 cryptographic manifests, and Unix/Windows permissions preservation into a single sealed `SVLT` container (`svault pack-dir` / `svault unpack-dir`). Supports `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi`, and transparent stego (PNG/WAV/BMP) & ASCII armor carrier extraction.
-11. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
+11. **Keyfile + Passphrase Two-Factor Key Derivation (`src/keyfile.rs`)** — combines an external hardware or USB keyfile (`--keyfile <path>`) with user passphrases via streaming 64 KiB HMAC-SHA256 pre-hashing prior to Argon2id key derivation. Supports full 2FA (passphrase + keyfile) and keyfile-only operational modes, built-in CSPRNG keyfile generation (`svault keyfile generate`), SHA-256 fingerprinting (`svault keyfile fingerprint`), Shannon entropy inspection (`svault keyfile inspect`), and transparent integration across all steganography carriers and directory archiving.
+12. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
 ### Features
 
@@ -93,6 +94,12 @@
   - **Temporal Access Enforcement**: vaults sealed with `--not-before` refuse decryption with `TimeLocked` until the threshold is reached; vaults sealed with `--expires-at` or `--expires-in` refuse decryption with `Expired` once the lifetime has elapsed.
   - **Flexible Temporal Syntax**: accepts Unix epoch seconds (`1791850000`), ISO-8601 UTC date/time (`2026-10-15T00:00:00Z`, `2026-12-31`), or relative durations (`+1h`, `+7d`, `+30m`, `+1y`).
   - **Inspection & Auditing Integration**: `inspect` displays policy status (`ACTIVE`, `TIMELOCKED`, `EXPIRED`), remaining or elapsed seconds, human-readable UTC timestamps, and description, with full `--json` support. `audit` parses policy headers and tracks ciphertext entropy offsets accordingly.
+- **Keyfile + Passphrase Two-Factor Derivation (`keyfile`)** — cryptographically bind physical USB tokens or external files to container encryption:
+  - **Streaming 64 KiB HMAC-SHA256**: reads keyfiles of arbitrary size (16 bytes up to multi-megabyte files) in a constant-memory 64 KiB zeroized buffer.
+  - **Cryptographic 2FA & Keyfile-Only Modes**: 2FA derives key material via `HMAC-SHA256(key = passphrase, data = "shadow-vault:keyfile-v1:" || keyfile_stream)`, while keyfile-only derives via domain separator `b"shadow-vault:keyfile-only:v1"`, feeding a 256-bit high-entropy seed into Argon2id.
+  - **CSPRNG Keyfile Generator (`svault keyfile generate`)**: creates cryptographically secure hardware keyfiles (default 64 bytes) via `rand::rngs::OsRng`.
+  - **Keyfile Inspection & Fingerprint (`inspect` / `fingerprint`)**: computes SHA-256 fingerprints (`SHA256:<hex>`) and Shannon entropy quality ratings with sample-size normalization.
+  - **Universal Command Binding**: `--keyfile` / `-k` supported across `encrypt`, `decrypt`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `pack-dir`, `unpack-dir`, and decoy vaults.
 - **3-Pass Secure File Shredder (`shred`)** — overwrites sensitive plaintext files with `0x00`, `0xFF`, and CSPRNG random bytes before unlinking.
 - **Single Static Binary** — compiled with `+crt-static`, `opt-level = "z"`, LTO, and stripped symbols. Zero external runtime dependencies.
 
@@ -232,6 +239,26 @@ svault inspect escrow.svault --json
 
 # 34. Decrypt testing against an explicit reference timestamp
 svault decrypt -i escrow.svault -o restored.txt -p "vault-pass" --at-time "2027-01-01"
+
+# 35. Generate a cryptographic USB keyfile (CSPRNG, default 64 bytes)
+svault keyfile generate -o usb_token.key --bytes 64
+
+# 36. Inspect keyfile fingerprint and Shannon entropy (text and JSON)
+svault keyfile inspect usb_token.key
+svault keyfile inspect usb_token.key --json
+svault keyfile fingerprint usb_token.key
+
+# 37. Encrypt and decrypt with 2FA (Passphrase + Keyfile)
+svault encrypt -i secret.txt -o sealed.svault -p "master-pass" -k usb_token.key
+svault decrypt -i sealed.svault -o restored.txt -p "master-pass" -k usb_token.key
+
+# 38. Keyfile-only encryption without password
+svault encrypt -i token.txt -o hardware.svault -k usb_token.key
+svault decrypt -i hardware.svault -o restored.txt -k usb_token.key
+
+# 39. Pack directory into encrypted vault with Keyfile 2FA
+svault pack-dir -i ./confidential -o archive.svault -p "pack-pass" -k usb_token.key
+svault unpack-dir -i archive.svault -o ./unpacked -p "pack-pass" -k usb_token.key
 ```
 
 ### License & Attribution
@@ -262,7 +289,8 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
 8. **자동 만료 클립보드 가드 (`src/clipboard_guard.rs`)** — 복호화된 비밀번호, TOTP 2FA 코드, 복구 시드문구를 Windows 클립보드로 안전하게 복사하고 설정된 유효시간(TTL, 예: `--clip-ttl 15`) 후 자동 소거합니다. Windows 10/11 클립보드 기록(Win + V) 및 클라우드 동기화 등록을 원천 차단하는 포맷 메타데이터(`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`)를 자동 주입하며, 소거 전 SHA-256 상수시간 지문 비교(`constant_time_eq_32`)를 수행해 사용자가 이후에 복사한 다른 클립보드 데이터를 덮어쓰지 않도록 안전하게 보호합니다 (`svault clip`, 및 복호화 명령 시 `--clip`).
 9. **리드-솔로몬 / 패리티 오류 정정 아머 (`src/armor.rs`)** — 블록 패리티 복구 스트라이프와 ASCII 아머드 `.svault.asc` 내보내기/가져오기/복구를 지원하여 부분적인 비트 손상(Bit Rot)이나 텍스트 전송 채널 상의 손상에서도 컨테이너를 복원합니다. $\text{GF}(256)$ 상의 코시(Cauchy) 생성 행렬 $[I_K; A]$을 사용하여 MDS(최대 거리 분리) 부호 성질을 보장하므로, 총 $K + M$개 스트라이프 중 임의의 $K$개 온전한 조각만 있으면 모든 원본 데이터를 완벽하게 재구성합니다. 자동 손상 탐지, 자가 치유 복구(`svault repair`), `inspect` 및 `audit` 자동 감지, 자동 만료 클립보드 가드를 결합 지원합니다 (`svault armor`, `svault dearmor`, `svault repair`).
 10. **디렉터리 및 다중 파일 매니페스트 패킹 (`src/archive.rs`)** — 전체 디렉터리 트리를 상대 경로 정규화, 다중 계층 Zip Slip / 경로 순회(Path Traversal) 방어, 압축 폭탄(Zip Bomb) 방어, 파일별 SHA-256 암호학적 매니페스트, Unix/Windows 파일 권한 보존과 함께 단일 `SVLT` 컨테이너로 완전 밀봉(`svault pack-dir` / `svault unpack-dir`)합니다. `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi` 및 투명한 스테가노그래피(PNG/WAV/BMP) & ASCII 아머 캐리어 추출을 지원합니다.
-11. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
+11. **키파일 + 비밀번호 이중 인증(2FA) 키 유도 (`src/keyfile.rs`)** — 외장 하드웨어 또는 USB 키파일(`--keyfile <경로>`)을 사용자 비밀번호와 결합하여 64 KiB 스트리밍 HMAC-SHA256 사전 해싱 후 Argon2id로 키를 유도합니다. 비밀번호 + 키파일 이중 인증(2FA) 및 키파일 단독 모드를 모두 지원하며, 내장 CSPRNG 키파일 생성(`svault keyfile generate`), SHA-256 지문 출력(`svault keyfile fingerprint`), 섀넌 엔트로피 감사(`svault keyfile inspect`), 제로화 메모리 소거 및 모든 미디어 스테가노그래피 캐리어·디렉터리 패킹과의 투명한 통합을 지원합니다.
+12. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
 ### 주요 기능
 
@@ -322,6 +350,12 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
   - **시점 기반 접근 제어**: `--not-before`로 지정된 시점 이전에는 `TimeLocked` 에러로 복호화가 거부되며, `--expires-at` 또는 `--expires-in`으로 설정된 수명이 만료되면 `Expired` 에러로 즉시 무효화됩니다.
   - **유연한 시간 표기법**: 유닉스 타임스탬프(`1791850000`), ISO-8601 UTC 날짜/일시(`2026-10-15T00:00:00Z`, `2026-12-31`), 상대 기간(`+1h`, `+7d`, `+30m`, `+1y`)을 자유롭게 지원.
   - **검사 및 감사 연동**: `inspect` 명령어로 활성 여부(`ACTIVE`, `TIMELOCKED`, `EXPIRED`), 잔여/초과 시간, UTC 일시 및 설명을 확인 가능하며(`--json` 지원), `audit` 명령어가 정책 헤더 오프셋을 자동 감지하여 엔트로피를 정밀 분석합니다.
+- **키파일 + 비밀번호 이중 인증(2FA) 키 유도 (`keyfile`)** — 외장 물리 USB 토큰이나 키파일을 컨테이너 암호화에 결속:
+  - **64 KiB 스트리밍 HMAC-SHA256**: 임의 크기(16바이트 ~ 수십 메가바이트)의 키파일을 64 KiB 고정 메모리 버퍼로 스트리밍 처리하며 즉시 제로화.
+  - **암호학적 2FA 및 키파일 단독 모드**: 비밀번호 + 키파일 결합 시 `HMAC-SHA256(key = 비밀번호, data = "shadow-vault:keyfile-v1:" || 키파일_스트림)`으로 256비트 시드를 유도하며, 키파일 단독 모드 시 도메인 구분자 `b"shadow-vault:keyfile-only:v1"`을 적용해 Argon2id로 전달.
+  - **CSPRNG 키파일 생성기 (`svault keyfile generate`)**: `rand::rngs::OsRng` 기반의 고품질 난수 키파일(기본 64바이트) 안전 생성.
+  - **지문 및 섀넌 엔트로피 검사 (`inspect` / `fingerprint`)**: SHA-256 지문(`SHA256:<hex>`) 및 표본 크기 정규화가 적용된 섀넌 엔트로피 품질 평가 제공.
+  - **전 명령어 유니버설 연동**: `encrypt`, `decrypt`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `pack-dir`, `unpack-dir`, 디코이 금고 등 전체 암호화 워크플로우에 `--keyfile` / `-k` 완전 결합.
 - **다중 패스 완전 파쇄 (`shred`)** — 원본 평문 파일을 삭제할 때 `0x00` ➔ `0xFF` ➔ 난수 덮어쓰기 후 디스크 동기화 및 길이 0 절삭을 수행해 포렌식 복구를 차단합니다.
 
 ### 사용법 요약
@@ -447,6 +481,26 @@ svault inspect escrow.svault --json
 
 # 34. 특정 기준 시점(--at-time)으로 복호화 시뮬레이션 및 검증
 svault decrypt -i escrow.svault -o restored.txt -p "금고비밀번호" --at-time "2027-01-01"
+
+# 35. 암호학적 난수 USB 키파일 생성 (CSPRNG, 기본 64바이트)
+svault keyfile generate -o usb_token.key --bytes 64
+
+# 36. 키파일 지문 및 섀넌 엔트로피 검사 (터미널 텍스트 및 JSON)
+svault keyfile inspect usb_token.key
+svault keyfile inspect usb_token.key --json
+svault keyfile fingerprint usb_token.key
+
+# 37. 비밀번호 + 키파일 이중 인증(2FA) 암호화 및 복호화
+svault encrypt -i secret.txt -o sealed.svault -p "마스터비밀번호" -k usb_token.key
+svault decrypt -i sealed.svault -o restored.txt -p "마스터비밀번호" -k usb_token.key
+
+# 38. 비밀번호 입력 없는 키파일 단독 암호화
+svault encrypt -i token.txt -o hardware.svault -k usb_token.key
+svault decrypt -i hardware.svault -o restored.txt -k usb_token.key
+
+# 39. 키파일 2FA를 적용한 디렉터리 아카이브 패킹 및 언패킹
+svault pack-dir -i ./confidential -o archive.svault -p "패킹비밀번호" -k usb_token.key
+svault unpack-dir -i archive.svault -o ./unpacked -p "패킹비밀번호" -k usb_token.key
 ```
 
 ### 저작권 및 라이선스

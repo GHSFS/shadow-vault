@@ -17,17 +17,21 @@
 //! - Proactive memory zeroization (`Zeroize` / `Zeroizing`) on secret payloads.
 
 use crate::error::{Error, Result};
-use crate::shamir::{gf_inv, gf_mul};
+use crate::shamir::{constant_time_eq, gf_inv, gf_mul};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use crc32fast::Hasher as CrcHasher;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use zeroize::{Zeroize, Zeroizing};
 
 /// Standard header markers for ASCII armored ShadowVault files.
 pub const ARMOR_HEADER_BEGIN: &str = "-----BEGIN SHADOW VAULT ARMORED FILE-----";
 pub const ARMOR_HEADER_END: &str = "-----END SHADOW VAULT ARMORED FILE-----";
+
+/// Maximum allowed armored payload size (256 MiB) to prevent memory exhaustion on untrusted headers.
+pub const MAX_ARMOR_PAYLOAD_BYTES: usize = 256 * 1024 * 1024;
 
 /// Accepted legacy or alternative begin markers for flexible interop.
 const ALT_ARMOR_BEGINS: &[&str] = &[
@@ -213,6 +217,7 @@ pub fn invert_matrix_gf256(matrix: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
         for j in 0..n {
             inv[i][j] = aug[i][n + j];
         }
+        aug[i].zeroize();
     }
     Ok(inv)
 }
@@ -299,7 +304,10 @@ pub fn reconstruct_data_shards(
     }
 
     // Invert G_sub in GF(256)
-    let g_inv = invert_matrix_gf256(&g_sub)?;
+    let mut g_inv = invert_matrix_gf256(&g_sub)?;
+    for mut row in g_sub {
+        row.zeroize();
+    }
 
     // Multiply G_inv by intact shard payloads
     let mut reconstructed = vec![vec![0u8; stripe_size]; k];
@@ -314,6 +322,7 @@ pub fn reconstruct_data_shards(
                 reconstructed[c][b] ^= gf_mul(coeff, shard_payload[b]);
             }
         }
+        g_inv[c].zeroize();
     }
 
     Ok(reconstructed)
@@ -340,6 +349,13 @@ pub fn armor_data(data: &[u8], data_stripes: u8, parity_stripes: u8) -> Result<S
         return Err(Error::Format(format!(
             "total stripes ({k} + {m} = {}) exceeds GF(256) capacity 256",
             k + m
+        )));
+    }
+    if data.len() > MAX_ARMOR_PAYLOAD_BYTES {
+        return Err(Error::Format(format!(
+            "payload length {} exceeds maximum armor limit ({} bytes)",
+            data.len(),
+            MAX_ARMOR_PAYLOAD_BYTES
         )));
     }
 
@@ -401,20 +417,24 @@ pub fn armor_data(data: &[u8], data_stripes: u8, parity_stripes: u8) -> Result<S
             "=== STRIPE {} ({}) CRC32: {:08x} ===\n",
             index, type_label, crc32
         ));
-        let b64 = BASE64.encode(payload);
+        let mut b64 = BASE64.encode(payload);
         for chunk in b64.as_bytes().chunks(64) {
             out.push_str(std::str::from_utf8(chunk).unwrap());
             out.push('\n');
         }
+        b64.zeroize();
         out.push('\n');
     }
 
     out.push_str(ARMOR_HEADER_END);
     out.push('\n');
 
-    // Wipe sensitive intermediate data shards from memory
+    // Wipe sensitive intermediate data & parity shards from memory
     for mut s in data_shards {
         s.zeroize();
+    }
+    for mut p in parity_shards {
+        p.zeroize();
     }
 
     Ok(out)
@@ -430,6 +450,14 @@ struct ParsedStripe {
     declared_crc: u32,
     payload: Option<Vec<u8>>,
     valid: bool,
+}
+
+impl Drop for ParsedStripe {
+    fn drop(&mut self) {
+        if let Some(ref mut p) = self.payload {
+            p.zeroize();
+        }
+    }
 }
 
 /// Parse metadata and stripes from an armored text document without performing reconstruction.
@@ -509,19 +537,59 @@ fn parse_armored_internal(armored: &str) -> Result<(ArmorMetadata, Vec<ParsedStr
         .ok_or_else(|| Error::Format("missing 'Data-Stripes' header in armored file".into()))?;
     let parity_stripes = parity_stripes
         .ok_or_else(|| Error::Format("missing 'Parity-Stripes' header in armored file".into()))?;
+    if data_stripes == 0 || parity_stripes == 0 {
+        return Err(Error::Format(
+            "'Data-Stripes' and 'Parity-Stripes' must be greater than zero".into(),
+        ));
+    }
+    let total_expected_stripes = (data_stripes as usize) + (parity_stripes as usize);
+    if total_expected_stripes > 256 {
+        return Err(Error::Format(format!(
+            "total stripes ({data_stripes} + {parity_stripes} = {total_expected_stripes}) exceeds GF(256) limit 256"
+        )));
+    }
+
     let original_length = original_length
         .ok_or_else(|| Error::Format("missing 'Original-Length' header in armored file".into()))?;
+    if original_length > MAX_ARMOR_PAYLOAD_BYTES {
+        return Err(Error::Format(format!(
+            "declared 'Original-Length' ({original_length}) exceeds maximum limit ({MAX_ARMOR_PAYLOAD_BYTES} bytes)"
+        )));
+    }
+
     let stripe_size = stripe_size.unwrap_or(if original_length == 0 {
         0
     } else {
         original_length.div_ceil(data_stripes as usize)
     });
+    if stripe_size > MAX_ARMOR_PAYLOAD_BYTES {
+        return Err(Error::Format(format!(
+            "declared 'Stripe-Size' ({stripe_size}) exceeds maximum limit ({MAX_ARMOR_PAYLOAD_BYTES} bytes)"
+        )));
+    }
+    if original_length > 0 {
+        let total_capacity = (data_stripes as usize)
+            .checked_mul(stripe_size)
+            .ok_or_else(|| Error::Format("stripe capacity overflow in header".into()))?;
+        if total_capacity < original_length {
+            return Err(Error::Format(format!(
+                "stripe capacity ({data_stripes} * {stripe_size} = {total_capacity}) is smaller than 'Original-Length' ({original_length})"
+            )));
+        }
+    }
+
     let payload_hash = payload_hash
         .ok_or_else(|| Error::Format("missing 'Payload-Hash' header in armored file".into()))?;
+    if payload_hash.len() != 64 || !payload_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(Error::Format(
+            "invalid 'Payload-Hash' header: expected 64-character hex SHA-256 digest".into(),
+        ));
+    }
 
     // Parse stripes
     let mut parsed_stripes = Vec::new();
     let mut stripe_infos = Vec::new();
+    let mut seen_valid_indices = HashSet::new();
 
     if !stripes_part.is_empty() {
         // Split by "=== STRIPE " delimiter
@@ -541,7 +609,7 @@ fn parse_armored_internal(armored: &str) -> Result<(ArmorMetadata, Vec<ParsedStr
             let header_clean = header_line.trim_end_matches('=').trim();
             let mut parts = header_clean.split_whitespace();
             let idx_str = parts.next().unwrap_or("0");
-            let index = idx_str.parse::<u8>().unwrap_or(0);
+            let index = idx_str.parse::<u8>().unwrap_or(u8::MAX);
             let is_parity = index >= data_stripes || header_clean.to_uppercase().contains("PARITY");
 
             // Extract CRC32
@@ -555,19 +623,34 @@ fn parse_armored_internal(armored: &str) -> Result<(ArmorMetadata, Vec<ParsedStr
             }
 
             // Extract clean base64 payload
-            let b64_clean: String = b64_body.chars().filter(|c| !c.is_whitespace()).collect();
+            let mut b64_clean: String = b64_body.chars().filter(|c| !c.is_whitespace()).collect();
             let decoded = BASE64.decode(b64_clean.as_bytes());
+            b64_clean.zeroize();
 
             let mut valid = false;
             let mut payload = None;
             let mut len = 0usize;
 
-            if let Ok(bytes) = decoded {
+            if let Ok(mut bytes) = decoded {
                 let actual_crc = compute_crc(&bytes);
                 len = bytes.len();
-                if actual_crc == declared_crc && (stripe_size == 0 || bytes.len() == stripe_size) {
+                let crc_matches =
+                    constant_time_eq(&actual_crc.to_le_bytes(), &declared_crc.to_le_bytes());
+                let size_matches = if original_length == 0 {
+                    bytes.is_empty()
+                } else {
+                    bytes.len() == stripe_size
+                };
+                let index_in_bounds = (index as usize) < total_expected_stripes;
+                if crc_matches
+                    && size_matches
+                    && index_in_bounds
+                    && seen_valid_indices.insert(index)
+                {
                     valid = true;
                     payload = Some(bytes);
+                } else {
+                    bytes.zeroize();
                 }
             }
 
@@ -624,7 +707,7 @@ pub fn dearmor_data(armored: &str) -> Result<Zeroizing<Vec<u8>>> {
 
     if meta.original_length == 0 {
         let expected = compute_sha256_hex(&[]);
-        if meta.payload_hash != expected {
+        if !constant_time_eq(meta.payload_hash.as_bytes(), expected.as_bytes()) {
             return Err(Error::Crypto(format!(
                 "payload hash mismatch: declared {}, actual {}",
                 meta.payload_hash, expected
@@ -651,6 +734,9 @@ pub fn dearmor_data(armored: &str) -> Result<Zeroizing<Vec<u8>>> {
     let reconstructed_data_shards = if all_data_intact {
         data_shards_direct
     } else {
+        for mut d in data_shards_direct {
+            d.zeroize();
+        }
         // Collect all intact stripes (both data and parity)
         let mut intact_subset = Vec::new();
         for s in &parsed_stripes {
@@ -678,14 +764,15 @@ pub fn dearmor_data(armored: &str) -> Result<Zeroizing<Vec<u8>>> {
 
     // Concatenate reconstructed data shards and truncate to original length
     let mut recovered = Vec::with_capacity(k * meta.stripe_size);
-    for shard in &reconstructed_data_shards {
-        recovered.extend_from_slice(shard);
+    for mut shard in reconstructed_data_shards {
+        recovered.extend_from_slice(&shard);
+        shard.zeroize();
     }
     recovered.truncate(meta.original_length);
 
-    // Verify cryptographic SHA-256 integrity
+    // Verify cryptographic SHA-256 integrity in constant time
     let actual_hash = compute_sha256_hex(&recovered);
-    if actual_hash != meta.payload_hash {
+    if !constant_time_eq(actual_hash.as_bytes(), meta.payload_hash.as_bytes()) {
         recovered.zeroize();
         return Err(Error::Crypto(format!(
             "payload SHA-256 hash mismatch after Reed-Solomon reconstruction (expected: {}, actual: {})",
@@ -736,13 +823,14 @@ pub fn repair_armored(armored: &str) -> Result<(String, Zeroizing<Vec<u8>>, Repa
 
     // Reconstruct payload and check hash
     let mut recovered = Vec::with_capacity(k * meta.stripe_size);
-    for shard in &reconstructed_data_shards {
-        recovered.extend_from_slice(shard);
+    for mut shard in reconstructed_data_shards {
+        recovered.extend_from_slice(&shard);
+        shard.zeroize();
     }
     recovered.truncate(meta.original_length);
 
     let actual_hash = compute_sha256_hex(&recovered);
-    if actual_hash != meta.payload_hash {
+    if !constant_time_eq(actual_hash.as_bytes(), meta.payload_hash.as_bytes()) {
         recovered.zeroize();
         return Err(Error::Crypto(format!(
             "repair failed: reconstructed payload hash mismatch (expected {}, got {})",
@@ -765,7 +853,7 @@ pub fn repair_armored(armored: &str) -> Result<(String, Zeroizing<Vec<u8>>, Repa
         original_length: meta.original_length,
         payload_hash: meta.payload_hash,
         message: format!(
-            "Successfully repaired container: {}/{} stripes restored via Cauchy MDS Reed-Solomon",
+            "Repaired container: {}/{} stripes restored via Cauchy MDS Reed-Solomon",
             reconstructed_stripes, total_stripes
         ),
     };
@@ -1067,5 +1155,64 @@ mod tests {
         assert!(res.is_err());
         let err_msg = res.unwrap_err().to_string();
         assert!(err_msg.contains("unrecoverable corruption"));
+    }
+
+    #[test]
+    fn test_armor_rejects_zero_stripes_and_overflow_bounds() {
+        let bad_zero = "-----BEGIN SHADOW VAULT ARMORED FILE-----\n\
+            Version: 1\n\
+            Data-Stripes: 0\n\
+            Parity-Stripes: 2\n\
+            Original-Length: 16\n\
+            Payload-Hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n\
+            -----END SHADOW VAULT ARMORED FILE-----\n";
+        assert!(dearmor_data(bad_zero).is_err());
+
+        let bad_overflow = "-----BEGIN SHADOW VAULT ARMORED FILE-----\n\
+            Version: 1\n\
+            Data-Stripes: 4\n\
+            Parity-Stripes: 2\n\
+            Original-Length: 999999999\n\
+            Stripe-Size: 16\n\
+            Payload-Hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n\
+            -----END SHADOW VAULT ARMORED FILE-----\n";
+        assert!(dearmor_data(bad_overflow).is_err());
+
+        let bad_capacity = "-----BEGIN SHADOW VAULT ARMORED FILE-----\n\
+            Version: 1\n\
+            Data-Stripes: 2\n\
+            Parity-Stripes: 2\n\
+            Original-Length: 100\n\
+            Stripe-Size: 10\n\
+            Payload-Hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n\
+            -----END SHADOW VAULT ARMORED FILE-----\n";
+        assert!(dearmor_data(bad_capacity).is_err());
+    }
+
+    #[test]
+    fn test_armor_rejects_duplicate_and_out_of_bounds_stripe_indices() {
+        let original = b"Duplicate stripe index defense verification payload";
+        let armored = armor_data(original, 3, 2).unwrap();
+
+        // Corrupt stripe 1 and stripe 2, and rename stripe 4 to duplicate index 0
+        let tampered = armored
+            .replace("=== STRIPE 1 (DATA)", "=== STRIPE 99 (DATA)")
+            .replace("=== STRIPE 2 (DATA)", "=== STRIPE 98 (DATA)")
+            .replace("=== STRIPE 4 (PARITY 1)", "=== STRIPE 0 (DATA)");
+
+        // Only index 0 and index 3 are valid distinct stripes (2 < 3 required)
+        assert!(dearmor_data(&tampered).is_err());
+    }
+
+    #[test]
+    fn test_armor_rejects_forged_payload_hash() {
+        let original = b"Forged SHA-256 payload digest detection test";
+        let armored = armor_data(original, 2, 1).unwrap();
+        let real_hash = compute_sha256_hex(original);
+        let forged_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+        let tampered = armored.replace(&real_hash, forged_hash);
+
+        let err = dearmor_data(&tampered).unwrap_err().to_string();
+        assert!(err.contains("hash mismatch"));
     }
 }

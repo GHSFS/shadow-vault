@@ -18,13 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `svault armor <flags>` (visible alias: `asc`): Convert a `.svault` container or secret file into an error-correcting ASCII armored file (`.svault.asc`) with configurable data stripes (`-k`) and Cauchy MDS parity stripes (`-m`), plus auto-expiring clipboard guard (`--clip`).
   - `svault dearmor <flags>` (visible aliases: `de-armor`, `unarmor`): Decode `.svault.asc` back into original container or secret file, with transparent Cauchy RS erasure reconstruction if corrupted stripes are detected.
   - `svault repair <flags>` (visible alias: `fix`): Inspect and repair corrupted `.svault.asc` files, regenerating a clean armored document or exporting directly to binary with `--binary`, plus `--json` diagnostic reporting.
-- Forensics & Steganalysis Integration:
+- Forensics, Decryption & Steganalysis Integration:
+  - Transparent `.svault.asc` dearmoring and Cauchy RS self-healing directly in `svault decrypt` and `svault decrypt-decoy`.
   - Auto-detection of armored files in `svault inspect <target>`, extracting and displaying armor stripe statistics and inner container metadata.
   - Auto-detection of armored files in `svault audit <target>`, auditing stripe CRC-32 checksums, anomaly detection, and reconstruction recommendations.
 - Auto-expiring Clipboard Guard Integration:
   - Added `--clip` and `--clip-ttl <seconds>` flags to `armor`, `dearmor`, and `repair`.
-- Proactive memory zeroization (`Zeroize` / `Zeroizing`) on sensitive decrypted and reconstructed secret buffers.
-- Comprehensive test coverage: 165 unit tests and 69 integration tests (234 total tests, 100% pass).
+- Cryptographic Hardening & Memory Safety:
+  - Constant-time verification (`constant_time_eq`) for per-stripe CRC-32 checksums and overall SHA-256 payload digests.
+  - Strict bounds and overflow validation on untrusted armor headers, plus duplicate/out-of-range stripe index rejection.
+  - Proactive memory zeroization (`Zeroize` / `Zeroizing`) across data shards, parity shards, Base64 buffers, Gaussian elimination matrices, and reconstructed secret buffers.
+- Comprehensive test coverage: 168 unit tests and 70 integration tests (238 total tests, 100% pass).
 
 ## [0.8.0] - 2026-10-12
 

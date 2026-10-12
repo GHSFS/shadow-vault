@@ -4359,3 +4359,71 @@ fn cli_armor_and_dearmor_clipboard_guard() {
         .assert()
         .success();
 }
+
+#[test]
+fn cli_decrypt_directly_from_corrupted_armored_container() {
+    let dir = tempdir().unwrap();
+    let secret_path = dir.path().join("direct_secret.txt");
+    let vault_path = dir.path().join("direct.svault");
+    let asc_path = dir.path().join("direct.svault.asc");
+    let decrypted_path = dir.path().join("direct_out.txt");
+
+    let secret_data = b"Direct decrypt from corrupted .svault.asc with transparent RS repair";
+    fs::write(&secret_path, secret_data).unwrap();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "encrypt",
+            "-i",
+            secret_path.to_str().unwrap(),
+            "-o",
+            vault_path.to_str().unwrap(),
+            "-p",
+            "direct-asc-pass-2026",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "armor",
+            "-i",
+            vault_path.to_str().unwrap(),
+            "-o",
+            asc_path.to_str().unwrap(),
+            "-k",
+            "4",
+            "-m",
+            "2",
+        ])
+        .assert()
+        .success();
+
+    // Corrupt stripe 0 in the armored container
+    let asc_text = fs::read_to_string(&asc_path).unwrap();
+    let corrupted_asc = asc_text.replace(
+        "=== STRIPE 0 (DATA)",
+        "=== STRIPE 0 (DATA) CRC32: 00000000 ===",
+    );
+    fs::write(&asc_path, &corrupted_asc).unwrap();
+
+    // Directly pass corrupted .svault.asc into `svault decrypt`
+    Command::cargo_bin("svault")
+        .unwrap()
+        .args([
+            "decrypt",
+            "-i",
+            asc_path.to_str().unwrap(),
+            "-o",
+            decrypted_path.to_str().unwrap(),
+            "-p",
+            "direct-asc-pass-2026",
+        ])
+        .assert()
+        .success();
+
+    let restored = fs::read(&decrypted_path).unwrap();
+    assert_eq!(restored, secret_data);
+}

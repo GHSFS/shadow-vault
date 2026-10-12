@@ -111,8 +111,15 @@ fn main() -> Result<()> {
             clip,
             clip_ttl,
         } => {
-            let container = fs::read(&input)
+            let raw_container = fs::read(&input)
                 .with_context(|| format!("failed to read container: {}", input.display()))?;
+            let container = if armor::is_armored(&raw_container) {
+                let text = std::str::from_utf8(&raw_container)
+                    .context("armored container is not valid UTF-8")?;
+                armor::dearmor_data(text)?.to_vec()
+            } else {
+                raw_container
+            };
             let mut plain = if let Some(d_pass) = decoy_passphrase {
                 if crypto::is_decoy_container(&container) {
                     decoy::open_decoy_explicit(&container, passphrase.as_deref(), Some(&d_pass))?

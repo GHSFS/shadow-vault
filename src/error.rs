@@ -22,4 +22,7 @@ pub enum Error {
 
     #[error("clipboard error: {0}")]
     Clipboard(String),
+
+    #[error("archive error: {0}")]
+    Archive(String),
 }

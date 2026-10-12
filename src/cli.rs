@@ -540,6 +540,74 @@ pub enum Commands {
         #[command(subcommand)]
         action: ClipAction,
     },
+
+    /// Pack an entire directory tree into an encrypted .svault container or carrier
+    #[command(name = "pack-dir", visible_alias = "pack")]
+    PackDir {
+        /// Input directory to pack
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Output .svault container or carrier file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Encryption passphrase
+        #[arg(short, long)]
+        passphrase: String,
+
+        /// Bind container to current Windows user/machine via DPAPI
+        #[arg(long)]
+        dpapi: bool,
+
+        /// Export as ASCII-armored document (.svault.asc)
+        #[arg(long)]
+        armor: bool,
+
+        /// Optional carrier file (.png, .wav, .bmp) to embed archive into
+        #[arg(long)]
+        carrier: Option<PathBuf>,
+
+        /// List files being packed
+        #[arg(short, long)]
+        list: bool,
+
+        /// Output summary report in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Unpack an encrypted .svault container or carrier back into directory
+    #[command(name = "unpack-dir", visible_alias = "unpack")]
+    UnpackDir {
+        /// Input .svault container or stego/armor carrier file path
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Destination directory to extract files into (optional when --list or --verify-only is used)
+        #[arg(short, long, required_unless_present_any = ["list", "verify_only"])]
+        output: Option<PathBuf>,
+
+        /// Decryption passphrase
+        #[arg(short, long)]
+        passphrase: Option<String>,
+
+        /// List archive contents without extracting
+        #[arg(short, long)]
+        list: bool,
+
+        /// Verify per-file SHA-256 digests and integrity without writing to disk
+        #[arg(long)]
+        verify_only: bool,
+
+        /// Overwrite existing destination files
+        #[arg(long)]
+        overwrite: bool,
+
+        /// Output archive listing or verification report in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

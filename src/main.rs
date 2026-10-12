@@ -2,6 +2,7 @@
 // http://www.apache.org/licenses/LICENSE-2.0>.
 // Copyright 2026 GHSFS. See the NOTICE file for attribution details.
 
+mod archive;
 mod armor;
 mod audit;
 mod bmp;
@@ -23,6 +24,7 @@ use cli::{Cli, ClipAction, Commands, TotpAction};
 use colored::Colorize;
 use std::fs;
 use std::io::{Read, Write};
+use std::path::Path;
 use zeroize::Zeroize;
 
 fn main() -> Result<()> {
@@ -1060,6 +1062,50 @@ fn main() -> Result<()> {
         Commands::Clip { action } => {
             handle_clip_command(action)?;
         }
+        Commands::PackDir {
+            input,
+            output,
+            mut passphrase,
+            dpapi,
+            armor,
+            carrier,
+            list,
+            json,
+        } => {
+            handle_pack_dir_command(
+                &input,
+                &output,
+                &passphrase,
+                dpapi,
+                armor,
+                carrier.as_deref(),
+                list,
+                json,
+            )?;
+            passphrase.zeroize();
+        }
+        Commands::UnpackDir {
+            input,
+            output,
+            mut passphrase,
+            list,
+            verify_only,
+            overwrite,
+            json,
+        } => {
+            handle_unpack_dir_command(
+                &input,
+                output.as_deref(),
+                passphrase.as_deref(),
+                list,
+                verify_only,
+                overwrite,
+                json,
+            )?;
+            if let Some(ref mut p) = passphrase {
+                p.zeroize();
+            }
+        }
     }
 
     Ok(())
@@ -1644,4 +1690,204 @@ fn print_carrier_audit(rep: &audit::FileAuditReport) {
             println!("    - {}", r.bright_blue());
         }
     }
+}
+
+fn handle_pack_dir_command(
+    input: &Path,
+    output: &Path,
+    passphrase: &str,
+    dpapi: bool,
+    armor: bool,
+    carrier: Option<&Path>,
+    list: bool,
+    json: bool,
+) -> Result<()> {
+    if passphrase.is_empty() {
+        anyhow::bail!("passphrase must not be empty");
+    }
+
+    let archive_bytes = archive::pack_directory(input)?;
+    let summary = archive::list_archive(&archive_bytes)?;
+
+    if list && !json {
+        println!(
+            "{} packing {} entries ({} files, {} dirs, {} bytes)",
+            "->".cyan().bold(),
+            summary.total_entries,
+            summary.file_count,
+            summary.dir_count,
+            summary.total_bytes
+        );
+        for entry in &summary.entries {
+            let type_str = if entry.is_dir { "DIR " } else { "FILE" };
+            println!(
+                "  {} {:>8} bytes  [{}]  {}  {}",
+                type_str.dimmed(),
+                entry.size,
+                entry.permissions,
+                &entry.sha256[..16],
+                entry.path
+            );
+        }
+    }
+
+    let sealed = crypto::seal(&archive_bytes, passphrase, dpapi)?;
+
+    if let Some(carrier_path) = carrier {
+        let carrier_bytes = fs::read(carrier_path)
+            .with_context(|| format!("failed to read carrier file: {}", carrier_path.display()))?;
+        let output_bytes = if carrier_bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+            stego::embed_in_png(&carrier_bytes, &sealed)?
+        } else if carrier_bytes.len() >= 12
+            && &carrier_bytes[0..4] == b"RIFF"
+            && &carrier_bytes[8..12] == b"WAVE"
+        {
+            wav::embed_in_wav(&carrier_bytes, &sealed, wav::WavMode::Chunk)?
+        } else if carrier_bytes.starts_with(b"BM") {
+            bmp::embed_in_bmp(&carrier_bytes, &sealed)?
+        } else {
+            anyhow::bail!(
+                "unsupported carrier format: {} (expected PNG, WAV, or BMP)",
+                carrier_path.display()
+            );
+        };
+        fs::write(output, &output_bytes)
+            .with_context(|| format!("failed to write carrier output: {}", output.display()))?;
+    } else if armor || output.extension().and_then(|e| e.to_str()) == Some("asc") {
+        let armored_text = armor::armor_data(&sealed, 4, 2)?;
+        fs::write(output, armored_text.as_bytes())
+            .with_context(|| format!("failed to write armored output: {}", output.display()))?;
+    } else {
+        fs::write(output, &sealed)
+            .with_context(|| format!("failed to write container: {}", output.display()))?;
+    }
+
+    if json {
+        let report = archive::PackReport {
+            status: "ok".into(),
+            files_packed: summary.file_count,
+            dirs_packed: summary.dir_count,
+            total_bytes: summary.total_bytes,
+            archive_size: archive_bytes.len(),
+            entries: summary.entries,
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "{} packed {} files ({} bytes) -> {} (dpapi={})",
+            "ok".green().bold(),
+            summary.file_count,
+            summary.total_bytes,
+            output.display(),
+            dpapi
+        );
+    }
+
+    Ok(())
+}
+
+fn handle_unpack_dir_command(
+    input: &Path,
+    output: Option<&Path>,
+    passphrase: Option<&str>,
+    list: bool,
+    verify_only: bool,
+    overwrite: bool,
+    json: bool,
+) -> Result<()> {
+    let pass = passphrase.ok_or_else(|| anyhow::anyhow!("--passphrase is required"))?;
+    if pass.is_empty() {
+        anyhow::bail!("passphrase must not be empty");
+    }
+
+    let raw_bytes = fs::read(input)
+        .with_context(|| format!("failed to read input file: {}", input.display()))?;
+
+    // Stego / Armor transparent carrier decoding
+    let container = if armor::is_armored(&raw_bytes) {
+        let text = std::str::from_utf8(&raw_bytes)
+            .context("armored container is not valid UTF-8")?;
+        armor::dearmor_data(text)?.to_vec()
+    } else if raw_bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        stego::extract_from_png(&raw_bytes)?
+    } else if raw_bytes.len() >= 12
+        && &raw_bytes[0..4] == b"RIFF"
+        && &raw_bytes[8..12] == b"WAVE"
+    {
+        wav::extract_from_wav(&raw_bytes, wav::ExtractWavMode::Auto)?
+    } else if raw_bytes.starts_with(b"BM") {
+        bmp::extract_from_bmp(&raw_bytes)?
+    } else {
+        raw_bytes
+    };
+
+    let plain = crypto::open(&container, pass)?;
+
+    if list {
+        let summary = archive::list_archive(&plain)?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        } else {
+            println!(
+                "{} archive contains {} entries ({} files, {} dirs, {} bytes):",
+                "ok".green().bold(),
+                summary.total_entries,
+                summary.file_count,
+                summary.dir_count,
+                summary.total_bytes
+            );
+            println!(
+                "  {:<6} {:>10}  {:<8}  {:<16}  {}",
+                "TYPE", "SIZE", "PERM", "SHA256 (16)", "PATH"
+            );
+            println!("  {}", "-".repeat(70).dimmed());
+            for entry in &summary.entries {
+                let type_str = if entry.is_dir { "DIR" } else { "FILE" };
+                let sha_short = if entry.is_dir {
+                    "-".to_string()
+                } else {
+                    entry.sha256.chars().take(16).collect()
+                };
+                println!(
+                    "  {:<6} {:>10}  {:<8}  {:<16}  {}",
+                    type_str, entry.size, entry.permissions, sha_short, entry.path
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    if verify_only {
+        let report = archive::verify_archive(&plain)?;
+        if json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            println!(
+                "{} verified {} files ({} bytes) — all cryptographic SHA-256 digests intact",
+                "ok".green().bold(),
+                report.files_verified,
+                report.total_bytes
+            );
+        }
+        return Ok(());
+    }
+
+    let dest = output.ok_or_else(|| {
+        anyhow::anyhow!("--output destination directory is required for extraction (or use --list / --verify-only)")
+    })?;
+
+    let report = archive::unpack_archive(&plain, dest, overwrite)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "{} unpacked {} files ({} bytes) -> {}",
+            "ok".green().bold(),
+            report.files_extracted,
+            report.total_bytes,
+            dest.display()
+        );
+    }
+
+    Ok(())
 }

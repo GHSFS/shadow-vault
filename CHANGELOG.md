@@ -5,6 +5,17 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-12
+
+### Added
+- Plausible deniability and dual-password decoy vault container engine (`src/decoy.rs`) embedding both primary hidden secrets and harmless decoy payloads within a single container.
+- High-entropy hidden slot design: hidden payload slot is statistically indistinguishable from uniform random noise (CSPRNG padding and ChaCha20-Poly1305 ciphertext) to an adversary holding only the decoy passphrase.
+- Dedicated CLI subcommands `encrypt-decoy` and `decrypt-decoy`, plus dual-payload flags `--decoy` and `--decoy-passphrase` in `encrypt` and `decrypt`.
+- Seamless dual-passphrase decryption: `svault decrypt` unlocks either the primary secret or the decoy secret depending on which passphrase is supplied.
+- Deniability-respecting container header inspection (`svault inspect`): identifies decoy containers (`container_type: decoy (plausible deniability)`) and reports outer decoy metadata without disclosing hidden slot existence or dimensions.
+- Zeroize memory audit, constant-time Poly1305 tag verification, and integer bounds safety across decoy framing and unpacking routines.
+- Comprehensive unit and integration test suite covering dual-password roundtrips, cross-carrier embedding (PNG and WAV), wrong passphrase rejections, and Shannon entropy randomness validation.
+
 ## [0.2.0] - 2026-10-12
 
 ### Added

@@ -18,11 +18,13 @@ use zeroize::{Zeroize, Zeroizing};
 
 pub const MAGIC: &[u8; 4] = b"SVLT";
 pub const VERSION: u8 = 1;
+pub const VERSION_V2: u8 = 2;
 pub const FLAG_DPAPI: u8 = 0x01;
+pub const FLAG_DECOY: u8 = 0x02;
 
-const SALT_LEN: usize = 16;
-const NONCE_LEN: usize = 12;
-const HEADER_LEN: usize = 4 + 1 + 1 + SALT_LEN + NONCE_LEN; // 34 bytes
+pub const SALT_LEN: usize = 16;
+pub const NONCE_LEN: usize = 12;
+pub const HEADER_LEN: usize = 4 + 1 + 1 + SALT_LEN + NONCE_LEN; // 34 bytes
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContainerInfo {
@@ -30,6 +32,7 @@ pub struct ContainerInfo {
     pub dpapi_bound: bool,
     pub payload_size: usize,
     pub salt_hex: String,
+    pub decoy_container: bool,
 }
 
 /// Seal plaintext bytes into a `SVLT` v1 encrypted container.
@@ -68,7 +71,7 @@ pub fn seal(plaintext: &[u8], passphrase: &str, bind_dpapi: bool) -> Result<Vec<
     Ok(out)
 }
 
-/// Open a `SVLT` v1 container and return the authenticated plaintext.
+/// Open a `SVLT` v1 or v2/decoy container and return the authenticated plaintext.
 pub fn open(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     if container.len() < HEADER_LEN + 16 {
         return Err(Error::Format(
@@ -81,12 +84,20 @@ pub fn open(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
         ));
     }
     let version = container[4];
-    if version != VERSION {
+    if version != VERSION && version != VERSION_V2 {
         return Err(Error::Format(format!(
             "unsupported container version: {version}"
         )));
     }
     let flags = container[5];
+    if (flags & FLAG_DECOY) != 0 {
+        return crate::decoy::open_decoy(container, passphrase).map(|r| r.into_bytes());
+    }
+
+    if version == VERSION_V2 {
+        return crate::decoy::open_v2(container, passphrase);
+    }
+
     let salt = &container[6..6 + SALT_LEN];
     let nonce_bytes = &container[6 + SALT_LEN..HEADER_LEN];
     let body = &container[HEADER_LEN..];
@@ -117,7 +128,16 @@ pub fn inspect(container: &[u8]) -> Result<ContainerInfo> {
         ));
     }
     let version = container[4];
+    if version != VERSION && version != VERSION_V2 {
+        return Err(Error::Format(format!(
+            "unsupported container version: {version}"
+        )));
+    }
     let flags = container[5];
+    if (flags & FLAG_DECOY) != 0 {
+        return crate::decoy::inspect_decoy(container);
+    }
+
     let salt = &container[6..6 + SALT_LEN];
     let salt_hex = salt.iter().map(|b| format!("{b:02x}")).collect::<String>();
     let body_len = container.len() - HEADER_LEN;
@@ -127,10 +147,16 @@ pub fn inspect(container: &[u8]) -> Result<ContainerInfo> {
         dpapi_bound: (flags & FLAG_DPAPI) != 0,
         payload_size: body_len.saturating_sub(16),
         salt_hex,
+        decoy_container: false,
     })
 }
 
-fn derive_key(passphrase: &[u8], salt: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
+/// Check if the container is a plausible deniability decoy container.
+pub fn is_decoy_container(container: &[u8]) -> bool {
+    crate::decoy::is_decoy_container(container)
+}
+
+pub(crate) fn derive_key(passphrase: &[u8], salt: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
     let params = Params::new(19 * 1024, 2, 1, Some(32))
         .map_err(|e| Error::Crypto(format!("Argon2 params error: {e}")))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
@@ -149,7 +175,7 @@ fn derive_key(passphrase: &[u8], salt: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
 }
 
 #[cfg(windows)]
-fn dpapi_protect(raw: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn dpapi_protect(raw: &[u8]) -> Result<Vec<u8>> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{
         CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
@@ -182,7 +208,7 @@ fn dpapi_protect(raw: &[u8]) -> Result<Vec<u8>> {
 }
 
 #[cfg(windows)]
-fn dpapi_unprotect(enc: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn dpapi_unprotect(enc: &[u8]) -> Result<Vec<u8>> {
     use windows::Win32::Foundation::{LocalFree, HLOCAL};
     use windows::Win32::Security::Cryptography::{
         CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
@@ -218,14 +244,14 @@ fn dpapi_unprotect(enc: &[u8]) -> Result<Vec<u8>> {
 }
 
 #[cfg(not(windows))]
-fn dpapi_protect(_raw: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn dpapi_protect(_raw: &[u8]) -> Result<Vec<u8>> {
     Err(Error::Dpapi(
         "Windows DPAPI hardware binding is only supported on Windows systems".into(),
     ))
 }
 
 #[cfg(not(windows))]
-fn dpapi_unprotect(_enc: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn dpapi_unprotect(_enc: &[u8]) -> Result<Vec<u8>> {
     Err(Error::Dpapi(
         "cannot open DPAPI-bound container on non-Windows platform".into(),
     ))

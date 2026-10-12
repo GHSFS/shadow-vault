@@ -4,6 +4,7 @@
 
 mod cli;
 mod crypto;
+mod decoy;
 mod error;
 mod shred;
 mod stego;
@@ -23,11 +24,26 @@ fn main() -> Result<()> {
             input,
             output,
             passphrase,
+            decoy,
+            decoy_passphrase,
+            padding,
             dpapi,
         } => {
             let raw = fs::read(&input)
                 .with_context(|| format!("failed to read input file: {}", input.display()))?;
-            let sealed = crypto::seal(&raw, &passphrase, dpapi)?;
+            let sealed = if let Some(decoy_path) = decoy {
+                let d_pass = decoy_passphrase.ok_or_else(|| {
+                    anyhow::anyhow!("--decoy-passphrase is required when --decoy is specified")
+                })?;
+                let raw_decoy = fs::read(&decoy_path).with_context(|| {
+                    format!("failed to read decoy file: {}", decoy_path.display())
+                })?;
+                decoy::seal_decoy(&raw, &passphrase, &raw_decoy, &d_pass, dpapi, padding)?
+            } else if padding > 0 {
+                decoy::seal_v2(&raw, &passphrase, dpapi, padding)?
+            } else {
+                crypto::seal(&raw, &passphrase, dpapi)?
+            };
             fs::write(&output, &sealed)
                 .with_context(|| format!("failed to write container: {}", output.display()))?;
             println!(
@@ -38,14 +54,63 @@ fn main() -> Result<()> {
                 dpapi
             );
         }
+        Commands::EncryptDecoy {
+            primary,
+            decoy,
+            output,
+            passphrase,
+            decoy_passphrase,
+            padding,
+            dpapi,
+        } => {
+            let raw_primary = fs::read(&primary)
+                .with_context(|| format!("failed to read primary file: {}", primary.display()))?;
+            let raw_decoy = fs::read(&decoy)
+                .with_context(|| format!("failed to read decoy file: {}", decoy.display()))?;
+            let sealed = decoy::seal_decoy(
+                &raw_primary,
+                &passphrase,
+                &raw_decoy,
+                &decoy_passphrase,
+                dpapi,
+                padding,
+            )?;
+            fs::write(&output, &sealed)
+                .with_context(|| format!("failed to write container: {}", output.display()))?;
+            println!(
+                "{} encrypted dual-slot container (primary: {} bytes, decoy: {} bytes) -> {} (dpapi={})",
+                "ok".green().bold(),
+                raw_primary.len(),
+                raw_decoy.len(),
+                output.display(),
+                dpapi
+            );
+        }
         Commands::Decrypt {
             input,
             output,
             passphrase,
+            decoy_passphrase,
+        }
+        | Commands::DecryptDecoy {
+            input,
+            output,
+            passphrase,
+            decoy_passphrase,
         } => {
             let container = fs::read(&input)
                 .with_context(|| format!("failed to read container: {}", input.display()))?;
-            let plain = crypto::open(&container, &passphrase)?;
+            let plain = if let Some(d_pass) = decoy_passphrase {
+                if crypto::is_decoy_container(&container) {
+                    decoy::open_decoy_explicit(&container, passphrase.as_deref(), Some(&d_pass))?
+                } else {
+                    crypto::open(&container, &d_pass)?
+                }
+            } else if let Some(p) = passphrase {
+                crypto::open(&container, &p)?
+            } else {
+                anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
+            };
             fs::write(&output, &plain)
                 .with_context(|| format!("failed to write output: {}", output.display()))?;
             println!(
@@ -60,13 +125,35 @@ fn main() -> Result<()> {
             secret,
             output,
             passphrase,
+            decoy,
+            decoy_passphrase,
+            padding,
             dpapi,
         } => {
             let png = fs::read(&carrier)
                 .with_context(|| format!("failed to read carrier PNG: {}", carrier.display()))?;
             let raw_secret = fs::read(&secret)
                 .with_context(|| format!("failed to read secret file: {}", secret.display()))?;
-            let sealed = crypto::seal(&raw_secret, &passphrase, dpapi)?;
+            let sealed = if let Some(decoy_path) = decoy {
+                let d_pass = decoy_passphrase.ok_or_else(|| {
+                    anyhow::anyhow!("--decoy-passphrase is required when --decoy is specified")
+                })?;
+                let raw_decoy = fs::read(&decoy_path).with_context(|| {
+                    format!("failed to read decoy file: {}", decoy_path.display())
+                })?;
+                decoy::seal_decoy(
+                    &raw_secret,
+                    &passphrase,
+                    &raw_decoy,
+                    &d_pass,
+                    dpapi,
+                    padding,
+                )?
+            } else if padding > 0 {
+                decoy::seal_v2(&raw_secret, &passphrase, dpapi, padding)?
+            } else {
+                crypto::seal(&raw_secret, &passphrase, dpapi)?
+            };
             let stego_png = stego::embed_in_png(&png, &sealed)?;
             fs::write(&output, &stego_png)
                 .with_context(|| format!("failed to write stego PNG: {}", output.display()))?;
@@ -81,11 +168,22 @@ fn main() -> Result<()> {
             carrier,
             output,
             passphrase,
+            decoy_passphrase,
         } => {
             let png = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego PNG: {}", carrier.display()))?;
             let sealed = stego::extract_from_png(&png)?;
-            let plain = crypto::open(&sealed, &passphrase)?;
+            let plain = if let Some(d_pass) = decoy_passphrase {
+                if crypto::is_decoy_container(&sealed) {
+                    decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
+                } else {
+                    crypto::open(&sealed, &d_pass)?
+                }
+            } else if let Some(p) = passphrase {
+                crypto::open(&sealed, &p)?
+            } else {
+                anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
+            };
             fs::write(&output, &plain)
                 .with_context(|| format!("failed to write extracted file: {}", output.display()))?;
             println!(
@@ -102,13 +200,35 @@ fn main() -> Result<()> {
             passphrase,
             mode,
             lsb,
+            decoy,
+            decoy_passphrase,
+            padding,
             dpapi,
         } => {
             let wav_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read carrier WAV: {}", carrier.display()))?;
             let raw_secret = fs::read(&secret)
                 .with_context(|| format!("failed to read secret file: {}", secret.display()))?;
-            let sealed = crypto::seal(&raw_secret, &passphrase, dpapi)?;
+            let sealed = if let Some(decoy_path) = decoy {
+                let d_pass = decoy_passphrase.ok_or_else(|| {
+                    anyhow::anyhow!("--decoy-passphrase is required when --decoy is specified")
+                })?;
+                let raw_decoy = fs::read(&decoy_path).with_context(|| {
+                    format!("failed to read decoy file: {}", decoy_path.display())
+                })?;
+                decoy::seal_decoy(
+                    &raw_secret,
+                    &passphrase,
+                    &raw_decoy,
+                    &d_pass,
+                    dpapi,
+                    padding,
+                )?
+            } else if padding > 0 {
+                decoy::seal_v2(&raw_secret, &passphrase, dpapi, padding)?
+            } else {
+                crypto::seal(&raw_secret, &passphrase, dpapi)?
+            };
             let effective_mode = if lsb { wav::WavMode::Lsb } else { mode };
             let stego_wav = wav::embed_in_wav(&wav_bytes, &sealed, effective_mode)?;
             fs::write(&output, &stego_wav)
@@ -125,6 +245,7 @@ fn main() -> Result<()> {
             carrier,
             output,
             passphrase,
+            decoy_passphrase,
             mode,
             lsb,
         } => {
@@ -132,7 +253,17 @@ fn main() -> Result<()> {
                 .with_context(|| format!("failed to read stego WAV: {}", carrier.display()))?;
             let effective_mode = if lsb { wav::ExtractWavMode::Lsb } else { mode };
             let sealed = wav::extract_from_wav(&wav_bytes, effective_mode)?;
-            let plain = crypto::open(&sealed, &passphrase)?;
+            let plain = if let Some(d_pass) = decoy_passphrase {
+                if crypto::is_decoy_container(&sealed) {
+                    decoy::open_decoy_explicit(&sealed, passphrase.as_deref(), Some(&d_pass))?
+                } else {
+                    crypto::open(&sealed, &d_pass)?
+                }
+            } else if let Some(p) = passphrase {
+                crypto::open(&sealed, &p)?
+            } else {
+                anyhow::bail!("either --passphrase or --decoy-passphrase must be provided");
+            };
             fs::write(&output, &plain)
                 .with_context(|| format!("failed to write extracted file: {}", output.display()))?;
             println!(
@@ -157,6 +288,10 @@ fn main() -> Result<()> {
             println!("dpapi_bound:       {}", info.dpapi_bound);
             println!("payload_bytes:     {}", info.payload_size);
             println!("salt_hex:          {}", info.salt_hex);
+            if info.decoy_container {
+                println!("decoy_container:   true");
+                println!("container_type:    decoy (plausible deniability)");
+            }
         }
         Commands::Shred { input, passes } => {
             let wiped = shred::shred_file(&input, passes)?;

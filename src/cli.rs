@@ -34,6 +34,50 @@ pub enum Commands {
         #[arg(short, long)]
         passphrase: String,
 
+        /// Optional decoy file to create a plausible deniability container
+        #[arg(short = 'd', long = "decoy")]
+        decoy: Option<PathBuf>,
+
+        /// Decoy passphrase when --decoy is specified
+        #[arg(long = "decoy-passphrase")]
+        decoy_passphrase: Option<String>,
+
+        /// Explicit random padding bytes for size obfuscation
+        #[arg(long, default_value_t = 0)]
+        padding: usize,
+
+        /// Bind container to the current Windows user/machine via DPAPI
+        #[arg(long)]
+        dpapi: bool,
+    },
+
+    /// Encrypt a dual-password container with primary hidden secret and plausible decoy
+    #[command(name = "encrypt-decoy", visible_alias = "enc-decoy")]
+    EncryptDecoy {
+        /// Primary secret file to conceal
+        #[arg(short = 'i', long = "primary")]
+        primary: PathBuf,
+
+        /// Decoy file to show under coercion
+        #[arg(short = 'd', long = "decoy")]
+        decoy: PathBuf,
+
+        /// Output .svault container file path
+        #[arg(short = 'o', long = "output")]
+        output: PathBuf,
+
+        /// Primary secret passphrase
+        #[arg(short = 'p', long = "passphrase")]
+        passphrase: String,
+
+        /// Decoy passphrase (reveals only decoy file)
+        #[arg(long = "decoy-passphrase")]
+        decoy_passphrase: String,
+
+        /// Explicit random padding bytes for size obfuscation
+        #[arg(long, default_value_t = 0)]
+        padding: usize,
+
         /// Bind container to the current Windows user/machine via DPAPI
         #[arg(long)]
         dpapi: bool,
@@ -50,9 +94,33 @@ pub enum Commands {
         #[arg(short, long)]
         output: PathBuf,
 
-        /// Decryption passphrase
+        /// Decryption passphrase (unlocks either primary or decoy automatically)
         #[arg(short, long)]
-        passphrase: String,
+        passphrase: Option<String>,
+
+        /// Explicit decoy passphrase
+        #[arg(long = "decoy-passphrase")]
+        decoy_passphrase: Option<String>,
+    },
+
+    /// Decrypt a plausible deniability container (seamless or explicit decoy passphrase)
+    #[command(name = "decrypt-decoy", visible_alias = "dec-decoy")]
+    DecryptDecoy {
+        /// Input .svault file path
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Output plaintext file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Decryption passphrase (unlocks either primary or decoy automatically)
+        #[arg(short, long)]
+        passphrase: Option<String>,
+
+        /// Explicit decoy passphrase
+        #[arg(long = "decoy-passphrase")]
+        decoy_passphrase: Option<String>,
     },
 
     /// Encrypt and hide a secret file inside a PNG carrier image
@@ -74,6 +142,18 @@ pub enum Commands {
         #[arg(short, long)]
         passphrase: String,
 
+        /// Optional decoy file to create a plausible deniability container
+        #[arg(short = 'd', long = "decoy")]
+        decoy: Option<PathBuf>,
+
+        /// Decoy passphrase when --decoy is specified
+        #[arg(long = "decoy-passphrase")]
+        decoy_passphrase: Option<String>,
+
+        /// Explicit random padding bytes for size obfuscation
+        #[arg(long, default_value_t = 0)]
+        padding: usize,
+
         /// Bind hidden payload to the current Windows user/machine via DPAPI
         #[arg(long)]
         dpapi: bool,
@@ -90,9 +170,13 @@ pub enum Commands {
         #[arg(short, long)]
         output: PathBuf,
 
-        /// Decryption passphrase
+        /// Decryption passphrase (unlocks either primary or decoy automatically)
         #[arg(short, long)]
-        passphrase: String,
+        passphrase: Option<String>,
+
+        /// Explicit decoy passphrase
+        #[arg(long = "decoy-passphrase")]
+        decoy_passphrase: Option<String>,
     },
 
     /// Encrypt and hide a secret file inside a WAV audio carrier
@@ -122,6 +206,18 @@ pub enum Commands {
         #[arg(long)]
         lsb: bool,
 
+        /// Optional decoy file to create a plausible deniability container
+        #[arg(short = 'd', long = "decoy")]
+        decoy: Option<PathBuf>,
+
+        /// Decoy passphrase when --decoy is specified
+        #[arg(long = "decoy-passphrase")]
+        decoy_passphrase: Option<String>,
+
+        /// Explicit random padding bytes for size obfuscation
+        #[arg(long, default_value_t = 0)]
+        padding: usize,
+
         /// Bind hidden payload to the current Windows user/machine via DPAPI
         #[arg(long)]
         dpapi: bool,
@@ -138,9 +234,13 @@ pub enum Commands {
         #[arg(short, long)]
         output: PathBuf,
 
-        /// Decryption passphrase
+        /// Decryption passphrase (unlocks either primary or decoy automatically)
         #[arg(short, long)]
-        passphrase: String,
+        passphrase: Option<String>,
+
+        /// Explicit decoy passphrase
+        #[arg(long = "decoy-passphrase")]
+        decoy_passphrase: Option<String>,
 
         /// Steganography mode (auto, chunk, or lsb)
         #[arg(short, long, value_enum, default_value_t = crate::wav::ExtractWavMode::Auto)]

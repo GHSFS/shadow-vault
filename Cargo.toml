@@ -1,6 +1,6 @@
 [package]
 name = "shadow-vault"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Zero-trust steganography and dual-layer hardware-bound encrypted vault (ChaCha20-Poly1305 + Argon2id + Windows DPAPI)"

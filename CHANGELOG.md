@@ -5,6 +5,21 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-10-13
+
+### Added
+- Container Re-Key & Passphrase Rotation Engine (`src/rotate.rs`):
+  - Seamless re-keying and credential rotation via new `svault rotate` subcommand (alias: `rekey`).
+  - Multi-carrier auto-detection supporting standard `.svault` binary containers, stego carriers (PNG `svLt` ancillary chunks, BMP 24-bit pixel LSB, WAV RIFF subchunk and LSB), and Cauchy Reed-Solomon ASCII armor (`.svault.asc`).
+  - Fresh CSPRNG entropy: generates independent 16-byte random salt and 12-byte random nonce for every rotation operation, ensuring zero nonce reuse.
+  - Windows DPAPI hardware binding control: preserves existing DPAPI configuration by default, or allows explicit enablement (`--dpapi`) and removal (`--no-dpapi`).
+  - Cryptographic time-lock & expiration policy preservation: retains authenticated `PolicyHeader` across rotations with ChaCha20-Poly1305 AAD verification, with an optional `--clear-policy` flag to strip policy headers.
+  - Atomic in-place file replacement: performs updates via temporary files (`<path>.tmp.<rand>`) with atomic filesystem rename, preventing file corruption in case of unexpected process interruptions.
+  - Proactive zeroization: enforces secure memory wiping across all keys, passphrases, and decrypted plaintext buffers.
+  - Machine-readable structured JSON report mode (`--json`).
+- Dedicated Domain Integration Test Suite (`tests/rotate_test.rs`):
+  - 8 comprehensive integration tests covering standard binary containers, atomic in-place rewrites, PNG/BMP/WAV stego carriers, ASCII armored containers, policy time-lock preservation and clearance, DPAPI toggle, authentication failure rejection, and JSON output mode (100% pass, under 400 lines).
+
 ## [0.17.0] - 2026-10-13
 
 ### Added

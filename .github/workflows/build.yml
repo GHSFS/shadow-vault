@@ -19,7 +19,7 @@ jobs:
     name: Build (Windows x64)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -39,14 +39,14 @@ jobs:
           Get-Item "svault-x64.exe" | Select-Object Name, Length
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: svault-x64
           path: svault-x64.exe
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             svault-x64.exe

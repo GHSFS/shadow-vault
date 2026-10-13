@@ -28,4 +28,7 @@ pub enum Error {
 
     #[error("policy violation: {0}")]
     Policy(String),
+
+    #[error("canary integrity error: {0}")]
+    Canary(String),
 }

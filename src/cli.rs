@@ -1018,6 +1018,13 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Detached integrity manifest and tamper canary verification
+    #[command(name = "canary", visible_alias = "manifest")]
+    Canary {
+        #[command(subcommand)]
+        action: CanaryAction,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1515,5 +1522,64 @@ pub enum GuardAction {
         /// Simulated reference timestamp
         #[arg(long = "at-time")]
         at_time: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CanaryAction {
+    /// Initialize a signed tamper canary manifest for a directory of containers/carriers
+    #[command(name = "init", visible_alias = "create", visible_alias = "generate")]
+    Init {
+        /// Target directory or file to track (defaults to '.')
+        #[arg(short = 'd', long = "dir", default_value = ".")]
+        dir: PathBuf,
+
+        /// Output manifest file path (defaults to '<dir>/.svault-canary.json')
+        #[arg(short = 'o', long = "output")]
+        output: Option<PathBuf>,
+
+        /// Optional passphrase to HMAC-sign the canary manifest
+        #[arg(short = 'p', long = "passphrase")]
+        passphrase: Option<String>,
+
+        /// Optional keyfile to bind to the canary signature
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
+        /// Track all regular files, not just recognized vault/stego carriers
+        #[arg(short = 'a', long = "all")]
+        all: bool,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Verify an integrity manifest against on-disk files and detect tampering or missing files
+    #[command(name = "verify", visible_alias = "check", visible_alias = "audit")]
+    Verify {
+        /// Target directory or file to verify against (defaults to '.')
+        #[arg(short = 'd', long = "dir", default_value = ".")]
+        dir: PathBuf,
+
+        /// Path to the canary manifest file (defaults to '<dir>/.svault-canary.json')
+        #[arg(short = 'm', long = "manifest")]
+        manifest: Option<PathBuf>,
+
+        /// Passphrase used when signing the canary manifest
+        #[arg(short = 'p', long = "passphrase")]
+        passphrase: Option<String>,
+
+        /// Keyfile used when signing the canary manifest
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
+        /// Fail verification if untracked files are found in target directory
+        #[arg(long = "strict")]
+        strict: bool,
+
+        /// Output verification report in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 }

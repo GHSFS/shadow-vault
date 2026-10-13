@@ -5,6 +5,19 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-10-13
+
+### Added
+- Detached Integrity Manifest & Canary Verification Engine (`src/canary.rs`):
+  - Added `svault canary init` (aliases: `create`, `generate`) to generate signed tamper canary manifests (`.svault-canary.json`) tracking files, byte sizes, and cryptographic SHA-256 digests across directory trees.
+  - Added `svault canary verify` (aliases: `check`, `audit`) to inspect on-disk files against manifests, detecting modified files (bit rot, unauthorized alterations), missing files (deletion), and untracked files with optional `--strict` enforcement.
+  - Multi-carrier format auto-detection: automatically identifies `.svault` binary containers, `SVST` chunked streams, `SVAR` directory packages, lossless PNG stego carriers (`svLt` chunks), 24-bit BMP pixel LSB carriers, 16-bit PCM WAV audio carriers, Cauchy Reed-Solomon ASCII armor (`.svault.asc`), and Shamir recovery shares.
+  - Cryptographic tamper-proofing: Argon2id key derivation + HMAC-SHA256 signature authentication when protected with a passphrase (`--passphrase`) or keyfile (`--keyfile`), with constant-time signature verification preventing timing analysis attacks.
+  - Canonical manifest representation: deterministic lexicographical sorting and format normalization ensuring repeatable signature generation across operating systems.
+  - Structured machine-readable JSON output mode (`--json`) for automated CI/CD pipelines and deployment integrity sweeps.
+- Dedicated Domain Integration Test Suite (`tests/canary_test.rs`):
+  - 10 comprehensive integration tests covering clean roundtrip verification, modified container detection, missing file reporting, strict untracked file enforcement, HMAC passphrase signing and verification, invalid passphrase rejection, tampered manifest detection, carrier format classification, keyfile 2FA binding, and JSON output mode (100% pass, 303 lines).
+
 ## [0.18.0] - 2026-10-13
 
 ### Added

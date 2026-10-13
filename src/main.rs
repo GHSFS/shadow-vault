@@ -6,6 +6,7 @@ mod archive;
 mod armor;
 mod audit;
 mod bmp;
+mod canary;
 mod cli;
 mod clipboard_guard;
 mod crypto;
@@ -26,7 +27,9 @@ mod wav;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, ClipAction, Commands, GuardAction, KeyfileAction, StreamAction, TotpAction};
+use cli::{
+    CanaryAction, Cli, ClipAction, Commands, GuardAction, KeyfileAction, StreamAction, TotpAction,
+};
 use colored::Colorize;
 use std::fs;
 use std::io::{Read, Write};
@@ -2246,6 +2249,150 @@ fn main() -> Result<()> {
                 );
             }
         }
+        Commands::Canary { action } => match action {
+            CanaryAction::Init {
+                dir,
+                output,
+                mut passphrase,
+                keyfile,
+                all,
+                json,
+            } => {
+                let report = canary::init_canary(
+                    &dir,
+                    output.as_deref(),
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    all,
+                );
+                if let Some(ref mut p) = passphrase {
+                    p.zeroize();
+                }
+                let rep = report?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&rep)?);
+                } else {
+                    println!(
+                        "{} initialized canary manifest: {} (canary_id: {}, tracked: {} files, auth: {})",
+                        "ok".green().bold(),
+                        rep.manifest_path,
+                        rep.canary_id,
+                        rep.total_tracked,
+                        rep.auth_mode,
+                    );
+                    for f in &rep.files {
+                        println!(
+                            "  - {:<12} {:>8} bytes  {:64}  {}",
+                            format!("[{}]", f.carrier).cyan(),
+                            f.size_bytes,
+                            f.sha256,
+                            f.path,
+                        );
+                    }
+                }
+            }
+            CanaryAction::Verify {
+                dir,
+                manifest,
+                mut passphrase,
+                keyfile,
+                strict,
+                json,
+            } => {
+                let verify_res = canary::verify_canary(
+                    &dir,
+                    manifest.as_deref(),
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    strict,
+                );
+                if let Some(ref mut p) = passphrase {
+                    p.zeroize();
+                }
+                let rep = verify_res?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&rep)?);
+                } else {
+                    println!(
+                        "=== [CANARY VERIFICATION] ===\n  Manifest:    {}\n  Canary ID:   {}\n  Created:     {}\n  Auth Mode:   {}\n  Signature:   {}\n  Tracked:     {} files (intact: {}, modified: {}, missing: {}, untracked: {})",
+                        rep.manifest_path,
+                        rep.canary_id,
+                        rep.created_at_iso,
+                        rep.auth_mode,
+                        if rep.signature_valid {
+                            "VALID".green().bold()
+                        } else {
+                            "INVALID / TAMPERED".red().bold()
+                        },
+                        rep.total_tracked,
+                        rep.intact_count,
+                        rep.modified_count,
+                        rep.missing_count,
+                        rep.untracked_count,
+                    );
+
+                    for rec in &rep.records {
+                        match rec.status {
+                            canary::FileIntegrityStatus::Intact => {
+                                println!(
+                                    "  {} {:<40} [{}]",
+                                    "ok".green().bold(),
+                                    rec.path,
+                                    rec.carrier.as_deref().unwrap_or("file"),
+                                );
+                            }
+                            canary::FileIntegrityStatus::Modified => {
+                                println!(
+                                    "  {} {:<40} {}",
+                                    "MODIFIED".red().bold(),
+                                    rec.path,
+                                    rec.message.as_deref().unwrap_or("digest mismatch"),
+                                );
+                            }
+                            canary::FileIntegrityStatus::Missing => {
+                                println!(
+                                    "  {} {:<40} {}",
+                                    "MISSING".red().bold(),
+                                    rec.path,
+                                    rec.message.as_deref().unwrap_or("file not found"),
+                                );
+                            }
+                            canary::FileIntegrityStatus::Untracked => {
+                                println!(
+                                    "  {} {:<40} (untracked file in target directory)",
+                                    "UNTRACKED".yellow().bold(),
+                                    rec.path,
+                                );
+                            }
+                        }
+                    }
+
+                    if rep.is_clean {
+                        println!(
+                            "{} All {} canary files intact. Zero tampering detected.",
+                            "ok".green().bold(),
+                            rep.intact_count,
+                        );
+                    } else {
+                        println!(
+                            "{} Integrity check FAILED: {} modified, {} missing.",
+                            "error".red().bold(),
+                            rep.modified_count,
+                            rep.missing_count,
+                        );
+                    }
+                }
+                if !rep.is_clean {
+                    anyhow::bail!(
+                        "canary verification failed: integrity compromised (signature_valid={}, modified={}, missing={}, untracked={})",
+                        rep.signature_valid,
+                        rep.modified_count,
+                        rep.missing_count,
+                        rep.untracked_count,
+                    );
+                }
+            }
+        },
     }
 
     Ok(())

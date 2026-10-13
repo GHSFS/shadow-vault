@@ -23,6 +23,7 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [x] **Dead-Man's Switch & Max-Attempt Self-Shred Guard (`src/guard.rs`)** — Tamper-resistant attempt ledger (`.guard` companion or centralized stealth ledger), configurable failed attempt thresholds (`--max-attempts`), dead-man switch inactivity timers (`--dead-man`), check-in extensions (`svault guard checkin`), emergency destruction (`svault guard trigger`), and automatic 3-pass cryptographic self-shredding via `shred_file`.
 - [x] **Unified Structured JSON Output Mode (`--json`) Across All Subcommands** — Machine-readable, structured JSON output across all subcommands (`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, and `keygen`) for programmatic scripting, pipeline chaining, and automated security audits, verified via dedicated domain integration tests (`tests/json_test.rs`).
 - [x] **Container Re-Key & Passphrase Rotation (`src/rotate.rs`)** — Atomically re-encrypt existing `.svault` containers or stego carriers (PNG, BMP, WAV, ASCII armor) with fresh 16-byte random salts and 12-byte nonces, DPAPI hardware binding toggle (`--dpapi`/`--no-dpapi`), temporal policy preservation or stripping (`--clear-policy`), and crash-resilient atomic file replacement (`svault rotate`).
+- [x] **Detached Integrity Manifest & Canary Verification (`src/canary.rs`)** — Generate and verify signed SHA-256 tamper canaries across vault directories (`svault canary init` / `svault canary verify`) with multi-carrier auto-detection, Argon2id + HMAC-SHA256 signature authentication, constant-time verification, and missing/modified/untracked anomaly reports.
 
 ---
 
@@ -31,7 +32,6 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 ### Archive & Container Management
 - [ ] **Hardware Security Token Hotplug Auto-Lock (`src/token_guard.rs`)** — Monitor USB/PnP security token insertion and removal events via Windows device notification routines to instantly trigger `zeroize` wiping on active memory keys and lock session state upon token detachment.
 - [ ] **PKCS#11 Smartcard & YubiKey PIV Key Binding (`src/piv.rs`)** — Decrypt vaults using RSA/EC private keys stored on hardware security tokens via PKCS#11 / Windows PIV minidriver (`--piv-slot`).
-- [ ] **Detached Integrity Manifest & Canary Verification (`src/canary.rs`)** — Generate and verify signed SHA-256 tamper canaries across vault directories (`svault canary init` / `svault canary verify`).
 - [ ] **Interactive In-Memory Vault Shell (`svault repl`)** — Unlock a key-value secret store once in non-pageable memory and query or update entries interactively without touching disk in plaintext.
 
 ### Advanced Steganography & Covert Transports
@@ -68,3 +68,5 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [ ] **PKCS#11 & YubiKey PIV Smartcard Unlocking (`src/pkcs11.rs`, `src/piv.rs`)** — Hardware token key wrapping via PKCS#11 and PIV slot 9D/9E challenge-response.
 - [ ] **USB Security Token Removal Auto-Lock (`src/usb_lock.rs`)** — Monitor Windows PnP device removal events to immediately zeroize active session keys when a hardware token is unplugged.
 - [ ] **Virtual Disk Mount Integration (`src/mount.rs`)** — Mount `.svault` containers as virtual drives exposing decoy or primary filesystems depending on the unlock credentials.
+- [ ] **Differential Fault Injection Countermeasures (`src/fault_guard.rs`)** — Redundant parity checks and double-read validation on AEAD verification to defend against hardware fault injection and clock glitch attacks.
+- [ ] **Merkle Mountain Range Verifiable Accumulator (`src/accumulator.rs`)** — Append-only authenticated Merkle Mountain Range ledger tracking container state revisions with compact $O(\log N)$ inclusion proofs.

@@ -35,9 +35,10 @@
 13. **Stego Carrier Visual & Statistical Diff Report (`src/diff.rs`)** — evaluates visual signal distortion (MSE, PSNR, MAE, pure LSB vs non-LSB flips), audio sample SNR/PSNR metrics, structural chunk table alignment, and information-theoretic divergence (Shannon entropy delta, total variation distance) between original and stego-bearing carrier files (`svault compare <original> <stego>`).
 14. **Dead-Man's Switch & Maximum Attempt Self-Shred Guard (`src/guard.rs`)** — binds containers and carriers to a tamper-resistant attempt ledger (`.guard` companion or centralized stealth ledger). Automatically triggers multi-pass cryptographic shredding via `shred_file` if $K$ consecutive incorrect passphrase attempts occur or if an inactivity dead-man switch lapses without check-in (`svault guard arm`, `svault guard status`, `svault guard checkin`, `svault guard reset`, `svault guard trigger`).
 15. **Deterministic & CSPRNG Passphrase Generator (`src/passgen/`)** — BIP-39 2,048-word Diceware recovery generator, character/symbol generator with visual ambiguity elimination (`--exclude-ambiguous`), raw CSPRNG byte tokens in Hex, Base64, and Base32 (`--bytes`), numeric PIN generation, master seed deterministic derivation (`--seed`, `--context`), multi-candidate generation, keyspace and empirical Shannon entropy evaluation with 5-tier resilience ratings, and auto-expiring clipboard guard integration (`svault keygen`).
-16. **Unified Structured JSON Output Mode (`--json`)** — outputs clean, machine-readable JSON across all subcommands (`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, `keygen`, `rotate`) with consistent status, operation metrics, payload sizes, and cryptographic fingerprints for shell pipelines and CI/CD automation.
+16. **Unified Structured JSON Output Mode (`--json`)** — outputs clean, machine-readable JSON across all subcommands (`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, `keygen`, `rotate`, `canary`) with consistent status, operation metrics, payload sizes, and cryptographic fingerprints for shell pipelines and CI/CD automation.
 17. **Container Re-Key & Passphrase Rotation (`rotate`, `src/rotate.rs`)** — re-encrypts `.svault` containers and stego carriers (PNG, BMP, WAV, ASCII armor) with fresh CSPRNG salt and nonce, new passphrases or keyfiles, optional Windows DPAPI hardware binding toggles (`--dpapi`/`--no-dpapi`), temporal policy preservation or stripping (`--clear-policy`), and crash-resilient atomic file replacement (`svault rotate`).
-18. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
+18. **Detached Integrity Manifest & Canary Verification (`canary`, `src/canary.rs`)** — generates and verifies signed SHA-256 tamper canaries across directory trees of vaults and carriers (`svault canary init` / `svault canary verify`). Features multi-carrier format detection, optional Argon2id + HMAC-SHA256 signature authentication, constant-time verification, missing/modified/untracked anomaly reports, and machine-readable JSON output.
+19. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
 ### Features
 
@@ -357,6 +358,14 @@ svault rotate -i carrier.asc -o rotated.asc -p "old-pass" -n "new-pass"
 # 57. Re-key with DPAPI hardware toggle and policy clearing
 svault rotate -i vault.svault -o dpapi_vault.svault -p "old-pass" -n "new-pass" --dpapi
 svault rotate -i locked.svault -o unlocked.svault -p "old-pass" -n "new-pass" --clear-policy --json
+
+# 58. Initialize detached integrity canary manifest for target directory
+svault canary init -d ./vaults
+svault canary init -d ./vaults -p "canary-auth-secret" --json
+
+# 59. Verify canary integrity against on-disk files
+svault canary verify -d ./vaults
+svault canary verify -d ./vaults -p "canary-auth-secret" --strict --json
 ```
 
 ### License & Attribution
@@ -389,11 +398,13 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
 10. **디렉터리 및 다중 파일 매니페스트 패킹 (`src/archive.rs`)** — 전체 디렉터리 트리를 상대 경로 정규화, 다중 계층 Zip Slip / 경로 순회(Path Traversal) 방어, 압축 폭탄(Zip Bomb) 방어, 파일별 SHA-256 암호학적 매니페스트, Unix/Windows 파일 권한 보존과 함께 단일 `SVLT` 컨테이너로 완전 밀봉(`svault pack-dir` / `svault unpack-dir`)합니다. `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi` 및 투명한 스테가노그래피(PNG/WAV/BMP) & ASCII 아머 캐리어 추출을 지원합니다.
 11. **키파일 + 비밀번호 이중 인증(2FA) 키 유도 (`src/keyfile.rs`)** — 외장 하드웨어 또는 USB 키파일(`--keyfile <경로>`)을 사용자 비밀번호와 결합하여 64 KiB 스트리밍 HMAC-SHA256 사전 해싱 후 Argon2id로 키를 유도합니다. 비밀번호 + 키파일 이중 인증(2FA) 및 키파일 단독 모드를 모두 지원하며, 내장 CSPRNG 키파일 생성(`svault keyfile generate`), SHA-256 지문 출력(`svault keyfile fingerprint`), 섀넌 엔트로피 감사(`svault keyfile inspect`), 제로화 메모리 소거 및 모든 미디어 스테가노그래피 캐리어·디렉터리 패킹과의 투명한 통합을 지원합니다.
 12. **청크 스트리밍 암호화 엔진 (`src/stream.rs`)** — 멀티 기가바이트(Multi-GB) 대용량 파일과 데이터 스트림을 $O(1)$ 고정 RAM 슬라이딩 윈도우로 안전하게 암호화 및 복호화합니다 (기본 4 MiB 청크, 64 KiB–64 MiB 범위). `SVST` v1 바이너리 헤더, 청크별 고유 논스 유도(`SHA256(b"shadow-vault:stream-chunk-nonce:v1" || base_nonce || chunk_index || tag)`), 청크별 AAD 위변조 방어, 시간 잠금/만료 정책 결합 및 Windows DPAPI 스트림 키 하드웨어 귀속을 지원합니다 (`svault stream encrypt`, `svault stream decrypt`, `svault stream inspect`, `--stream`, `--chunk-size`).
+13. **스테가노그래피 캐리어 시각/통계적 디프 리포트 (`src/diff.rs`)** — 원본과 스테가노그래피 캐리어 간의 시각 신호 왜곡(MSE, PSNR, MAE, 순수 LSB 변조율), 16비트 오디오 왜곡(SNR, PSNR), 구조적 청크 테이블 정렬 및 섀넌 엔트로피 차이를 비교 분석(`svault compare`)합니다.
 14. **데드맨 스위치 & 최대 실패 횟수 자동 파기 가드 (`src/guard.rs`)** — 변조 방지 시도 원장(`.guard` 동반 파일 또는 은닉 전역 원장)을 기반으로 $K$회 연속 인증 실패 시 3단계(0x00, 0xFF, CSPRNG) 영구 파일 파쇄를 자동 실행하며, 비활동 기한 만료 시 셀프 파쇄를 발동하는 데드맨 스위치를 제공합니다 (`svault guard arm`, `svault guard status`, `svault guard checkin`, `svault guard reset`, `svault guard trigger`).
 15. **결정론적 & CSPRNG 비밀번호 생성기 (`src/passgen/`)** — 2,048개 BIP-39 단어 사전 기반 다이스웨어(Diceware) 복구 문구 생성, 시각적 혼동 문자 제거(`--exclude-ambiguous`) 패스워드/PIN 생성, Hex/Base64/Base32 원시 암호학적 바이트 토큰 생성, 마스터 시드 결정론적 유도(`--seed`, `--context`), 5단계 엔트로피 내구성 평가 및 자동 만료 클립보드 가드 결합을 지원합니다 (`svault keygen`).
-16. **전 서브커맨드 전수 구조화 JSON 출력 모드 (`--json`)** — 모든 서브커맨드(`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, `keygen`, `rotate`)에서 기계 판독 가능한 일관된 표준 JSON 응답(`status`, `command`, 세부 메타데이터, 바이트 크기, 지문)을 제공하여 CI/CD 및 자동화 쉘 스크립트 파이프라인 연계를 지원합니다.
+16. **전 서브커맨드 전수 구조화 JSON 출력 모드 (`--json`)** — 모든 서브커맨드(`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, `keygen`, `rotate`, `canary`)에서 기계 판독 가능한 일관된 표준 JSON 응답(`status`, `command`, 세부 메타데이터, 바이트 크기, 지문)을 제공하여 CI/CD 및 자동화 쉘 스크립트 파이프라인 연계를 지원합니다.
 17. **컨테이너 키 교체 및 비밀번호 회전 (`rotate`, `src/rotate.rs`)** — 기존 `.svault` 컨테이너 또는 스테가노그래피 캐리어(PNG, BMP, WAV, ASCII 아머)를 새로운 비밀번호나 키파일로 재암호화(`svault rotate`)합니다. 매 회전마다 독립적인 16바이트 솔트와 12바이트 논스를 생성하고, Windows DPAPI 하드웨어 귀속 설정 변경(`--dpapi`/`--no-dpapi`), 시간 잠금/만료 정책 보존 또는 제거(`--clear-policy`), 원자적 임시 파일 치환을 지원합니다.
-18. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
+18. **분리형 무결성 매니페스트 및 카나리 검증 (`canary`, `src/canary.rs`)** — 볼트 및 스테가노그래피 캐리어 디렉터리의 변조 여부를 모니터링하는 서명된 SHA-256 카나리 매니페스트를 생성하고 검증(`svault canary init` / `svault canary verify`)합니다. 다중 캐리어 포맷 자동 식별, Argon2id + HMAC-SHA256 서명 인증, 상수 시간 서명 검증, 수정/삭제/미추적 이상 탐지 및 구조화 JSON 출력을 지원합니다.
+19. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
 ### 주요 기능
 
@@ -660,6 +671,14 @@ svault rotate -i carrier.asc -o rotated.asc -p "기존비밀번호" -n "신규�
 # 52. DPAPI 하드웨어 바인딩 토글 및 시간 정책 소거 회전
 svault rotate -i vault.svault -o dpapi.svault -p "기존비밀번호" -n "신규비밀번호" --dpapi
 svault rotate -i locked.svault -o unlocked.svault -p "기존비밀번호" -n "신규비밀번호" --clear-policy --json
+
+# 53. 디렉터리 분리형 무결성 카나리 매니페스트 생성
+svault canary init -d ./vaults
+svault canary init -d ./vaults -p "카나리비밀번호" --json
+
+# 54. 디렉터리 카나리 무결성 및 변조 검증
+svault canary verify -d ./vaults
+svault canary verify -d ./vaults -p "카나리비밀번호" --strict --json
 ```
 
 ### 저작권 및 라이선스

@@ -89,6 +89,10 @@ pub enum Commands {
         /// Store guard in companion file (<output>.guard) instead of stealth system ledger
         #[arg(long = "guard-companion")]
         guard_companion: bool,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Encrypt a dual-password container with primary hidden secret and plausible decoy
@@ -125,6 +129,10 @@ pub enum Commands {
         /// Bind container to the current Windows user/machine via DPAPI
         #[arg(long)]
         dpapi: bool,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Decrypt a .svault container back to its original file
@@ -165,6 +173,10 @@ pub enum Commands {
         /// Explicit streaming container decryption mode
         #[arg(long = "stream")]
         stream: bool,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Decrypt a plausible deniability container (seamless or explicit decoy passphrase)
@@ -201,6 +213,10 @@ pub enum Commands {
         /// Optional simulated reference UTC timestamp for policy validation
         #[arg(long = "at-time")]
         at_time: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Encrypt and hide a secret file inside a PNG carrier image
@@ -257,6 +273,10 @@ pub enum Commands {
         /// Optional descriptive label or policy comment
         #[arg(long = "policy-desc")]
         policy_desc: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Extract and decrypt a secret file from a stego PNG image
@@ -293,6 +313,10 @@ pub enum Commands {
         /// Optional simulated reference UTC timestamp for policy validation
         #[arg(long = "at-time")]
         at_time: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Encrypt and hide a secret file inside a WAV audio carrier
@@ -357,6 +381,10 @@ pub enum Commands {
         /// Optional descriptive label or policy comment
         #[arg(long = "policy-desc")]
         policy_desc: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Extract and decrypt a secret file from a stego WAV audio file
@@ -401,6 +429,10 @@ pub enum Commands {
         /// Optional simulated reference UTC timestamp for policy validation
         #[arg(long = "at-time")]
         at_time: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Encrypt and hide a secret file inside a 24-bit uncompressed BMP carrier image
@@ -457,6 +489,10 @@ pub enum Commands {
         /// Optional descriptive label or policy comment
         #[arg(long = "policy-desc")]
         policy_desc: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Extract and decrypt a secret file from a stego BMP image
@@ -493,6 +529,10 @@ pub enum Commands {
         /// Optional simulated reference UTC timestamp for policy validation
         #[arg(long = "at-time")]
         at_time: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Estimate and display steganographic data storage capacity for a carrier file
@@ -525,6 +565,10 @@ pub enum Commands {
         /// Number of overwrite passes (default: 3)
         #[arg(short, long, default_value_t = 3)]
         passes: u8,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Split a secret or master recovery key into M-of-N Shamir shares (GF(256))
@@ -609,6 +653,10 @@ pub enum Commands {
         /// Auto-expiring clipboard time-to-live in seconds (default: 15)
         #[arg(long = "clip-ttl", default_value_t = 15)]
         clip_ttl: u64,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Decode an ASCII armored file (.svault.asc) back to the original container or secret file
@@ -633,6 +681,10 @@ pub enum Commands {
         /// Auto-expiring clipboard time-to-live in seconds (default: 15)
         #[arg(long = "clip-ttl", default_value_t = 15)]
         clip_ttl: u64,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Inspect and repair a corrupted .svault.asc armored file using Cauchy Reed-Solomon parity
@@ -1017,6 +1069,10 @@ pub enum KeyfileAction {
         /// Keyfile size in bytes (min: 16, max: 1048576, default: 64)
         #[arg(short, long, default_value_t = 64)]
         bytes: usize,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Inspect a keyfile's size, SHA-256 fingerprint, and Shannon entropy
@@ -1035,6 +1091,10 @@ pub enum KeyfileAction {
         /// Path to the keyfile
         #[arg(value_name = "KEYFILE")]
         path: PathBuf,
+
+        /// Output fingerprint in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1082,6 +1142,10 @@ pub enum TotpAction {
         /// Bind container to current Windows user/machine via DPAPI
         #[arg(long)]
         dpapi: bool,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Generate the current live 2FA code for an account
@@ -1150,6 +1214,10 @@ pub enum TotpAction {
         /// Re-bind container with DPAPI upon saving
         #[arg(long)]
         dpapi: bool,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Verify a TOTP code against an account with time skew tolerance
@@ -1205,6 +1273,10 @@ pub enum TotpAction {
         /// Bind container with DPAPI
         #[arg(long)]
         dpapi: bool,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Export account record as standard 'otpauth://totp/...' URI
@@ -1243,6 +1315,10 @@ pub enum ClipAction {
         /// Suppress terminal countdown progress bar
         #[arg(short, long)]
         quiet: bool,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Read and output current Unicode text from clipboard
@@ -1255,7 +1331,11 @@ pub enum ClipAction {
 
     /// Unconditionally wipe the system clipboard
     #[command(visible_alias = "wipe", visible_alias = "empty")]
-    Clear,
+    Clear {
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Inspect current clipboard status (format, history suppression, length)
     #[command(visible_alias = "info")]
@@ -1294,6 +1374,10 @@ pub enum GuardAction {
         /// Store guard in companion file (<target>.guard) instead of stealth system ledger
         #[arg(long = "companion")]
         companion: bool,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Inspect current guard status and attempt metrics
@@ -1317,6 +1401,10 @@ pub enum GuardAction {
         /// Target file
         #[arg(short, long)]
         target: PathBuf,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Check-in to refresh dead-man switch deadline
@@ -1328,6 +1416,10 @@ pub enum GuardAction {
         /// Optional new duration interval (e.g. "24h", "7d")
         #[arg(long = "interval")]
         interval: Option<String>,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Disarm and remove guard protection from target
@@ -1336,6 +1428,10 @@ pub enum GuardAction {
         /// Target file
         #[arg(short, long)]
         target: PathBuf,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Manually trigger immediate emergency multi-pass self-shred
@@ -1351,6 +1447,10 @@ pub enum GuardAction {
         /// Confirm destructive emergency self-shred without prompting
         #[arg(long = "force")]
         force: bool,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// List all actively guarded targets in the stealth ledger

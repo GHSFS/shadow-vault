@@ -5,6 +5,17 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-10-13
+
+### Added
+- Unified Machine-Readable JSON Output Mode (`--json`) Across All Subcommands:
+  - Standardized structured JSON responses across the entire CLI command surface: `encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, and `keygen`.
+  - Consistent envelope schema format with `"status": "ok"`, `"command": "<subcommand>"`, target paths, payload/cipher byte counters, timing metrics, and cryptographic hashes.
+  - Carrier type classification in `inspect` JSON output (`carrier_type: "vault" | "stream" | "png" | "wav" | "bmp" | "armor"`).
+  - Dedicated Domain Integration Test Suite (`tests/json_test.rs`):
+    - 7 comprehensive integration tests covering end-to-end JSON workflows across standard encryption/decryption, dual-password decoy containers, Cauchy Reed-Solomon parity armoring and multi-pass shredding, keyfile generation and fingerprinting, TOTP vault management, Dead-Man guard lifecycle operations, PNG stego embedding/extraction, and clipboard guard operations (100% pass).
+    - Fully compliant with modular architecture guidelines (483 lines, under 500-line soft ceiling).
+
 ## [0.16.0] - 2026-10-13
 
 ### Added

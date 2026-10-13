@@ -829,6 +829,90 @@ pub enum Commands {
         #[command(subcommand)]
         action: GuardAction,
     },
+
+    /// Generate cryptographically secure passphrases, recovery words, or random keys
+    #[command(name = "keygen", visible_alias = "passgen", visible_alias = "gen-key")]
+    Keygen {
+        /// Number of Diceware recovery words to generate (BIP-39 dictionary, e.g. 6)
+        #[arg(short = 'w', long = "words")]
+        words: Option<usize>,
+
+        /// Word separator character or string for Diceware mode (default: "-")
+        #[arg(long = "separator", default_value = "-")]
+        separator: String,
+
+        /// Capitalize each Diceware word (TitleCase)
+        #[arg(long = "capitalize")]
+        capitalize: bool,
+
+        /// Append a random numeric digit (0-9) to each Diceware word
+        #[arg(long = "number")]
+        number: bool,
+
+        /// Generate random character passphrase of specified length (default: 20 if no words/bytes specified)
+        #[arg(short = 'l', long = "length", visible_alias = "chars")]
+        length: Option<usize>,
+
+        /// Exclude punctuation symbols from generated passphrase
+        #[arg(long = "no-symbols")]
+        no_symbols: bool,
+
+        /// Exclude numeric digits (0-9) from generated passphrase
+        #[arg(long = "no-numbers")]
+        no_numbers: bool,
+
+        /// Exclude uppercase letters (A-Z) from generated passphrase
+        #[arg(long = "no-upper")]
+        no_upper: bool,
+
+        /// Exclude visually ambiguous characters (0, O, o, 1, l, I, 8, B, |)
+        #[arg(long = "exclude-ambiguous")]
+        exclude_ambiguous: bool,
+
+        /// Generate raw CSPRNG random bytes (hex-encoded by default)
+        #[arg(short = 'b', long = "bytes")]
+        bytes: Option<usize>,
+
+        /// Output raw bytes in Base64 format instead of hexadecimal
+        #[arg(long = "base64")]
+        base64: bool,
+
+        /// Output raw bytes in Base32 format (compatible with RFC 6238 TOTP secrets)
+        #[arg(long = "base32")]
+        base32: bool,
+
+        /// Generate numeric PIN of specified length
+        #[arg(long = "pin")]
+        pin: Option<usize>,
+
+        /// Optional master seed string for deterministic reproducible generation
+        #[arg(short = 's', long = "seed")]
+        seed: Option<String>,
+
+        /// Optional salt or context string when using deterministic --seed
+        #[arg(long = "context")]
+        context: Option<String>,
+
+        /// Number of candidate passphrases to generate (default: 1)
+        #[arg(short = 'n', long = "count", default_value_t = 1)]
+        count: usize,
+
+        /// Output generated passphrase in structured JSON format
+        #[arg(long)]
+        json: bool,
+
+        /// Display detailed keyspace and Shannon entropy analysis table
+        #[arg(long)]
+        entropy: bool,
+
+        /// Securely copy generated passphrase to clipboard with auto-expiring guard
+        #[arg(long)]
+        clip: bool,
+
+        /// Auto-expiring clipboard guard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
+    },
 }
 
 #[derive(Debug, Subcommand)]

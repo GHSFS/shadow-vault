@@ -120,6 +120,13 @@
   - **Stealth Ledger & Companion Modes**: defaults to stealth storage in user profile directories (`~/.shadow-vault/guards/<path_hash>.guard`) to prevent adversaries from detecting active guards, or portable companion files (`<target>.guard`).
   - **Tamper-Evident Signatures**: every ledger update signs state using SHA-256 with machine-bound seeds. Malicious manual modifications to counter values are rejected with `tampering detected`.
   - **Carrier & Archive Transparency**: guards can be armed across standard `.svault` containers, streaming files, or steganography carriers (PNG, WAV, BMP).
+- **Deterministic & CSPRNG Passphrase Generator (`keygen` / `passgen`)** — generate high-entropy recovery phrases and cryptographic tokens:
+  - **BIP-39 Diceware Engine (`--words 6`)**: selects from curated 2,048-word English dictionary (11.0 bits entropy per word), with customizable delimiters (`--separator`), TitleCase capitalization (`--capitalize`), and inline numeric padding (`--number`).
+  - **Customizable Character Passphrases (`--length 20`)**: configurable inclusion of symbols, digits, and uppercase letters with guaranteed class diversity and visual ambiguity elimination (`--exclude-ambiguous` removes `0`, `O`, `o`, `1`, `l`, `I`, `8`, `B`, `|`).
+  - **Raw Cryptographic Byte Tokens (`--bytes 32`)**: outputs raw CSPRNG bytes in hexadecimal, standard Base64 (`--base64`), or RFC 4648 Base32 (`--base32`, compatible with TOTP seeds).
+  - **Deterministic Seed Derivation (`--seed`, `--context`)**: derives reproducible passphrases from a master seed and service context using HMAC-SHA256, allowing operators to deterministically regenerate credentials.
+  - **Entropy Rating & Vulnerability Assessment (`--entropy`)**: classifies keyspace entropy across five tiers (Weak to Military Grade), computes Shannon entropy, and estimates crack times across online, Argon2id, and GPU threat models.
+  - **Auto-Expiring Clipboard Guard (`--clip`, `--clip-ttl`)**: copies secrets directly to system clipboard with memory auto-wiping and Windows clipboard history suppression.
 - **3-Pass Secure File Shredder (`shred`)** — overwrites sensitive plaintext files with `0x00`, `0xFF`, and CSPRNG random bytes before unlinking.
 - **Single Static Binary** — compiled with `+crt-static`, `opt-level = "z"`, LTO, and stripped symbols. Zero external runtime dependencies.
 
@@ -315,6 +322,22 @@ svault guard reset -t guarded.svault
 # 48. Disarm a guard or trigger emergency multi-pass file shredding
 svault guard disarm -t guarded.svault
 svault guard trigger -t guarded.svault --force --passes 3
+
+# 49. Generate a 6-word BIP-39 Diceware recovery passphrase
+svault keygen --words 6
+
+# 50. Generate customized Diceware with numbers and capitalization
+svault keygen --words 4 --separator "." --capitalize --number
+
+# 51. Generate 24-character password with ambiguity filter and entropy analysis
+svault keygen --length 24 --exclude-ambiguous --entropy
+
+# 52. Deterministic passphrase derivation from master seed and service context
+svault keygen --words 6 --seed "master-recovery-seed" --context "github-token"
+
+# 53. Generate raw 32-byte cryptographic token (Base64 or Base32) and copy to clipboard
+svault keygen --bytes 32 --base64 --clip --clip-ttl 30
+svault keygen --bytes 20 --base32 --json
 ```
 
 ### License & Attribution

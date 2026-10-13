@@ -14,6 +14,7 @@ mod diff;
 mod error;
 mod guard;
 mod keyfile;
+mod passgen;
 mod policy;
 mod shamir;
 mod shred;
@@ -1834,6 +1835,62 @@ fn main() -> Result<()> {
         }
         Commands::Guard { action } => {
             handle_guard_command(action)?;
+        }
+        Commands::Keygen {
+            words,
+            separator,
+            capitalize,
+            number,
+            length,
+            no_symbols,
+            no_numbers,
+            no_upper,
+            exclude_ambiguous,
+            bytes,
+            base64,
+            base32,
+            pin,
+            seed,
+            context,
+            count,
+            json,
+            entropy,
+            clip,
+            clip_ttl,
+        } => {
+            let mode = if let Some(w) = words {
+                passgen::PassgenMode::Diceware(passgen::DicewareOptions {
+                    words: w,
+                    separator,
+                    capitalize,
+                    number,
+                })
+            } else if let Some(b) = bytes {
+                let encoding = if base64 {
+                    passgen::ByteEncoding::Base64
+                } else if base32 {
+                    passgen::ByteEncoding::Base32
+                } else {
+                    passgen::ByteEncoding::Hex
+                };
+                passgen::PassgenMode::Bytes(b, encoding)
+            } else if let Some(p) = pin {
+                passgen::PassgenMode::Pin(p)
+            } else {
+                let char_len = length.unwrap_or(20);
+                passgen::PassgenMode::Characters(passgen::CharOptions {
+                    length: char_len,
+                    no_symbols,
+                    no_numbers,
+                    no_upper,
+                    no_lower: false,
+                    exclude_ambiguous,
+                })
+            };
+
+            let items = passgen::generate_batch(&mode, count, seed.as_deref(), context.as_deref())?;
+
+            passgen::print_batch_cli(&items, json, entropy, clip, clip_ttl)?;
         }
     }
 

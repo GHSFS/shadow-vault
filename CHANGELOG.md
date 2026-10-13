@@ -5,6 +5,40 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-10-13
+
+### Added
+- Deterministic & CSPRNG Passphrase Generator Engine (`src/passgen/`):
+  - BIP-39 Diceware recovery phrase generator (`src/passgen/words.rs`, `src/passgen/wordlist.rs`):
+    - Curated static dictionary of 2,048 BIP-39 mnemonic words (11.0 bits theoretical keyspace entropy per word).
+    - Customizable word count (`--words <N>`, default 6 words for ~66 bits of entropy).
+    - Configurable word separators (`--separator <STR>`, default `-`).
+    - TitleCase capitalization (`--capitalize`) and inline numeric digit attachment (`--number`).
+  - Cryptographic random character passphrase & numeric PIN generator (`src/passgen/chars.rs`):
+    - Configurable character length (`--length <N>`, default: 20).
+    - Granular character set controls (`--no-symbols`, `--no-numbers`, `--no-upper`).
+    - Guaranteed class diversity: ensures at least one character from each active character class followed by uniform Fisher-Yates shuffling.
+    - Ambiguous character elimination (`--exclude-ambiguous` filters out `0`, `O`, `o`, `1`, `l`, `I`, `8`, `B`, `|`).
+    - Numeric PIN mode (`--pin <N>`).
+  - Raw cryptographic byte token generation (`src/passgen/bytes.rs`):
+    - Generates CSPRNG random bytes (`--bytes <N>`) with selectable encodings: lowercase hexadecimal (default), standard RFC 4648 Base64 (`--base64`), or RFC 4648 Base32 (`--base32`, compatible with TOTP authenticator secrets).
+  - Deterministic reproducible seed derivation:
+    - Master seed and context input (`--seed <STR>`, `--context <STR>`) with HMAC-SHA256 derivation into `rand::rngs::StdRng` for reproducible credential generation.
+  - Multi-candidate generation (`--count <N>`):
+    - Generates $N$ candidate passphrases or keys in a single invocation.
+  - Cryptographic keyspace and empirical Shannon entropy assessment (`src/passgen/entropy.rs`):
+    - Evaluates theoretical keyspace entropy and empirical distribution metrics from `src/audit.rs`.
+    - 5-tier resilience classification badge (`WEAK`, `FAIR`, `STRONG`, `VERY STRONG`, `MILITARY GRADE`).
+    - Offline crack time estimates across online rate-limited, Argon2id, and high-throughput GPU threat models.
+    - Detailed evaluation flag (`--entropy`).
+  - Auto-expiring clipboard guard integration (`--clip`, `--clip-ttl <SECONDS>`):
+    - Automatically copies generated secrets to clipboard via `src/clipboard_guard.rs` with Windows clipboard history suppression and TTL memory scrubbing.
+  - Structured machine-readable JSON output (`--json`):
+    - Exports generated candidates, mode, entropy metrics, strength scores, and crack times.
+- Dedicated `keygen` CLI subcommand suite (`svault keygen`, aliases: `svault passgen`, `svault gen-key`).
+- Dedicated Domain Integration Test Suite (`tests/passgen_test.rs`):
+  - 8 comprehensive integration tests covering Diceware defaults and options, character diversity, ambiguity filtering, raw byte encodings (Hex, Base64, Base32), numeric PINs, deterministic seed reproducibility, multi-candidate generation, JSON output mode, and CLI aliases (100% pass).
+
 ## [0.15.0] - 2026-10-13
 
 ### Added

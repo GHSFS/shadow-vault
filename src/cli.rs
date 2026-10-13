@@ -965,6 +965,59 @@ pub enum Commands {
         #[arg(long = "clip-ttl", default_value_t = 15)]
         clip_ttl: u64,
     },
+
+    /// Re-key an existing vault container or stego carrier with a new passphrase or keyfile
+    #[command(name = "rotate", visible_alias = "rekey")]
+    Rotate {
+        /// Input .svault container or carrier file path
+        #[arg(short = 'i', long = "input")]
+        input: PathBuf,
+
+        /// Output .svault container or carrier file path (optional when --in-place is specified)
+        #[arg(
+            short = 'o',
+            long = "output",
+            required_unless_present = "in_place",
+            conflicts_with = "in_place"
+        )]
+        output: Option<PathBuf>,
+
+        /// Overwrite input container or carrier in-place atomically
+        #[arg(long = "in-place", conflicts_with = "output")]
+        in_place: bool,
+
+        /// Current (old) decryption passphrase
+        #[arg(short = 'p', long = "old-passphrase")]
+        old_passphrase: Option<String>,
+
+        /// New encryption passphrase
+        #[arg(short = 'n', long = "new-passphrase")]
+        new_passphrase: Option<String>,
+
+        /// Optional current (old) keyfile path
+        #[arg(long = "old-keyfile")]
+        old_keyfile: Option<PathBuf>,
+
+        /// Optional new keyfile path
+        #[arg(long = "new-keyfile")]
+        new_keyfile: Option<PathBuf>,
+
+        /// Explicitly bind rotated container with Windows DPAPI hardware protection
+        #[arg(long = "dpapi", conflicts_with = "no_dpapi")]
+        dpapi: bool,
+
+        /// Explicitly remove Windows DPAPI hardware binding
+        #[arg(long = "no-dpapi", conflicts_with = "dpapi")]
+        no_dpapi: bool,
+
+        /// Strip and clear existing time-lock / expiration policy header
+        #[arg(long = "clear-policy")]
+        clear_policy: bool,
+
+        /// Output rotation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

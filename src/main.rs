@@ -16,6 +16,7 @@ mod guard;
 mod keyfile;
 mod passgen;
 mod policy;
+mod rotate;
 mod shamir;
 mod shred;
 mod stego;
@@ -2170,6 +2171,80 @@ fn main() -> Result<()> {
             let items = passgen::generate_batch(&mode, count, seed.as_deref(), context.as_deref())?;
 
             passgen::print_batch_cli(&items, json, entropy, clip, clip_ttl)?;
+        }
+        Commands::Rotate {
+            input,
+            output,
+            in_place,
+            mut old_passphrase,
+            mut new_passphrase,
+            old_keyfile,
+            new_keyfile,
+            dpapi,
+            no_dpapi,
+            clear_policy,
+            json,
+        } => {
+            let out_target = if in_place {
+                &input
+            } else if let Some(ref o) = output {
+                o
+            } else {
+                anyhow::bail!("either --output or --in-place must be specified");
+            };
+
+            if old_passphrase.is_none() && old_keyfile.is_none() {
+                anyhow::bail!("either --old-passphrase or --old-keyfile must be provided");
+            }
+            if new_passphrase.is_none() && new_keyfile.is_none() {
+                anyhow::bail!("either --new-passphrase or --new-keyfile must be provided");
+            }
+
+            let opts = rotate::RotateOptions {
+                old_passphrase: old_passphrase.as_deref(),
+                new_passphrase: new_passphrase.as_deref(),
+                old_keyfile: old_keyfile.as_deref(),
+                new_keyfile: new_keyfile.as_deref(),
+                dpapi,
+                no_dpapi,
+                clear_policy,
+            };
+
+            check_guard_preflight(&input, None)?;
+            let rotate_res = rotate::rotate_carrier_file(&input, out_target, &opts);
+            if let Some(ref mut p) = old_passphrase {
+                p.zeroize();
+            }
+            if let Some(ref mut p) = new_passphrase {
+                p.zeroize();
+            }
+            let report = match rotate_res {
+                Ok(rep) => {
+                    let _ = guard::record_success(&input, None);
+                    rep
+                }
+                Err(e) => {
+                    handle_guard_post_failure(&input, None)?;
+                    return Err(e.into());
+                }
+            };
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "{} rotated {} ({}) -> {} [payload: {} bytes, dpapi: {} -> {}, policy_preserved: {}, policy_cleared: {}]",
+                    "ok".green().bold(),
+                    report.input_path,
+                    report.carrier_type,
+                    report.output_path,
+                    report.payload_bytes,
+                    report.old_dpapi_bound,
+                    report.new_dpapi_bound,
+                    report.policy_preserved,
+                    report.policy_cleared,
+                );
+            }
         }
     }
 

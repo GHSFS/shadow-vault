@@ -14,14 +14,14 @@ fn cli_version_and_help_work() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.14.0"));
+        .stdout(predicate::str::contains("svault 0.15.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
         .arg("-V")
         .assert()
         .success()
-        .stdout(predicate::str::contains("svault 0.14.0"));
+        .stdout(predicate::str::contains("svault 0.15.0"));
 
     Command::cargo_bin("svault")
         .unwrap()
@@ -51,7 +51,8 @@ fn cli_version_and_help_work() {
         .stdout(predicate::str::contains("clip"))
         .stdout(predicate::str::contains("shred"))
         .stdout(predicate::str::contains("pack-dir"))
-        .stdout(predicate::str::contains("unpack-dir"));
+        .stdout(predicate::str::contains("unpack-dir"))
+        .stdout(predicate::str::contains("guard"));
 
     Command::cargo_bin("svault")
         .unwrap()

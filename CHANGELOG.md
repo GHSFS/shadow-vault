@@ -5,6 +5,35 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-10-13
+
+### Added
+- Dead-Man's Switch and Maximum Attempt Self-Destruction Guard Engine (`src/guard.rs`):
+  - Authenticated attempt tracking ledger:
+    - Protects containers and carriers against unauthorized brute-force attempts and coercive access by maintaining a cryptographically signed attempt ledger (`GuardPolicy`).
+    - Configurable maximum attempt thresholds (`--max-attempts`, default: 3). Failed authentication attempts increment the ledger and issue countdown warnings; successful authentication resets failed counters to zero.
+    - Multi-pass cryptographic self-shredding: reaching the threshold $K$ triggers a 3-pass DoD-style overwrite (`0x00`, `0xFF`, CSPRNG), flushes hardware buffers (`sync_all`), and permanently deletes the target vault and its ledger.
+  - Inactivity dead-man switch timer:
+    - Supports inactivity deadline intervals (`--dead-man 7d`, `24h`) and explicit deadlines (`--deadline <ISO8601>`).
+    - Operators can check in (`svault guard checkin -t <target> [--interval <dur>]`) to extend the operational window. If the deadline lapses without check-in, the vault automatically executes self-destruction on the next access attempt.
+  - Dual storage topologies:
+    - Stealth ledger mode (default): stores hashed guard policies in the operator's profile directory (`~/.shadow-vault/guards/<path_hash>.guard`), keeping guard enforcement hidden from filesystem inspection. Configurable via `SVAULT_GUARD_DIR`.
+    - Portable companion file mode (`--companion`, `--guard-companion`): stores guard policies alongside targets as `<target>.guard`.
+  - Cryptographic tamper resistance:
+    - Ledger files are signed with machine-bound seeds and SHA-256 digests over all policy fields. Any unauthorized modification to attempt counters or timestamps causes immediate signature verification failure (`tampering detected`), halting decryption before keys are exposed.
+  - Direct carrier and archive protection:
+    - Transparent integration across standard vaults, streaming containers, directory archives (`pack-dir`/`unpack-dir`), and steganography carriers (PNG, WAV, BMP).
+- Dedicated `guard` CLI subcommand suite (`svault guard`):
+  - `svault guard arm -t <target> [-m <max_attempts>] [--dead-man <dur>] [--deadline <ts>] [--passes <n>] [--companion]`: arms a file with guard protections.
+  - `svault guard status -t <target> [--json] [--at-time <ts>]`: inspects attempt counts, deadlines, and active policies.
+  - `svault guard reset -t <target>`: resets failed attempts counter back to zero.
+  - `svault guard checkin -t <target> [--interval <dur>]`: extends dead-man switch expiration window.
+  - `svault guard disarm -t <target>`: removes active guard protection without modifying the target.
+  - `svault guard trigger -t <target> --force [--passes <n>]`: triggers immediate emergency multi-pass shredding.
+  - `svault guard list [--json] [--at-time <ts>]`: enumerates all active stealth guard ledgers.
+- Dedicated Domain Integration Test Suite (`tests/guard_test.rs`):
+  - 7 integration tests covering companion file mode, stealth ledger mode, success attempt resets, threshold self-shredding, dead-man expiration and check-in, ledger tampering rejection, disarm and forced emergency shredding, and stego PNG carrier self-shredding (100% pass).
+
 ## [0.14.0] - 2026-10-13
 
 ### Added

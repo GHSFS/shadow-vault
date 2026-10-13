@@ -31,8 +31,9 @@
 9. **Reed-Solomon / Parity Error-Correcting Armor (`src/armor.rs`)** — adds block parity recovery stripes and ASCII-armored `.svault.asc` export/import so containers survive partial bit rot or text transmission corruptions. Employs a Cauchy generator matrix $[I_K; A]$ over $\text{GF}(256)$ guaranteeing Maximum Distance Separable (MDS) erasure correction: ANY $K$ intact shards out of $K + M$ total stripes can reconstruct all original data shards. Supports automated corruption detection, self-healing document repair (`svault repair`), auto-detection in `inspect` and `audit`, and auto-expiring clipboard guard (`svault armor`, `svault dearmor`, `svault repair`).
 10. **Directory & Multi-File Manifest Packing (`src/archive.rs`)** — packs entire directory trees with relative path canonicalization, multi-layered Zip Slip / path traversal prevention, zip bomb defense, per-file SHA-256 cryptographic manifests, and Unix/Windows permissions preservation into a single sealed `SVLT` container (`svault pack-dir` / `svault unpack-dir`). Supports `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi`, and transparent stego (PNG/WAV/BMP) & ASCII armor carrier extraction.
 11. **Keyfile + Passphrase Two-Factor Key Derivation (`src/keyfile.rs`)** — combines an external hardware or USB keyfile (`--keyfile <path>`) with user passphrases via streaming 64 KiB HMAC-SHA256 pre-hashing prior to Argon2id key derivation. Supports full 2FA (passphrase + keyfile) and keyfile-only operational modes, built-in CSPRNG keyfile generation (`svault keyfile generate`), SHA-256 fingerprinting (`svault keyfile fingerprint`), Shannon entropy inspection (`svault keyfile inspect`), and transparent integration across all steganography carriers and directory archiving.
-12. **Chunked Streaming Encryption for Multi-GB Files (`src/stream.rs`)** — encrypts and decrypts multi-gigabyte files and streams with constant $O(1)$ RAM using an authenticated sliding window (default 4 MiB chunks, range 64 KiB–64 MiB). Employs `SVST` v1 headers, per-chunk nonce derivation (`SHA256(b"shadow-vault:stream-chunk-nonce:v1" || base_nonce || chunk_index || tag)`), per-chunk AAD tamper defense, optional policy temporal constraints, and Windows DPAPI hardware stream key wrapping (`svault stream encrypt`, `svault stream decrypt`, `svault stream inspect`, `--stream`, `--chunk-size`).
-13. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
+13. **Stego Carrier Visual & Statistical Diff Report (`src/diff.rs`)** — evaluates visual signal distortion (MSE, PSNR, MAE, pure LSB vs non-LSB flips), audio sample SNR/PSNR metrics, structural chunk table alignment, and information-theoretic divergence (Shannon entropy delta, total variation distance) between original and stego-bearing carrier files (`svault compare <original> <stego>`).
+14. **Dead-Man's Switch & Maximum Attempt Self-Shred Guard (`src/guard.rs`)** — binds containers and carriers to a tamper-resistant attempt ledger (`.guard` companion or centralized stealth ledger). Automatically triggers multi-pass cryptographic shredding via `shred_file` if $K$ consecutive incorrect passphrase attempts occur or if an inactivity dead-man switch lapses without check-in (`svault guard arm`, `svault guard status`, `svault guard checkin`, `svault guard reset`, `svault guard trigger`).
+15. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
 ### Features
 
@@ -112,6 +113,13 @@
   - **Structural Chunk Table Comparison**: inspects PNG ancillary chunks and WAV RIFF subchunks, identifying injected `svLt` metadata, offset locations, and byte lengths.
   - **Information-Theoretic & Histogram Divergence**: computes Shannon entropy shifts ($\Delta H$), 256-bin byte frequency Total Variation Distance (TVD), Chi-Square divergence ($\chi^2$), and Hamming distance bit flips.
   - **Structured JSON & Detailed Inspection**: supports `--json` for automated security pipelines and `--detailed` for modified byte spans and histogram deltas.
+- **Dead-Man's Switch & Max-Attempt Self-Destruction Guard (`guard`)** — active defense against unauthorized access:
+  - **Configurable Attempt Threshold**: arm containers with a maximum failed passphrase limit (`--max-attempts 3`). Successful authentication resets failed attempt counters to zero.
+  - **Cryptographic Multi-Pass Self-Shredding**: upon reaching threshold $K$, executes 3-pass DoD-style cryptographic overwrite (`0x00`, `0xFF`, CSPRNG), flushes hardware file buffers (`sync_all`), and unlinks the target file permanently.
+  - **Dead-Man Switch Inactivity Timer**: configure deadline durations (`--dead-man 7d`, `24h`). If an operator fails to check in before the deadline (`svault guard checkin`), the vault automatically shreds on the next access attempt.
+  - **Stealth Ledger & Companion Modes**: defaults to stealth storage in user profile directories (`~/.shadow-vault/guards/<path_hash>.guard`) to prevent adversaries from detecting active guards, or portable companion files (`<target>.guard`).
+  - **Tamper-Evident Signatures**: every ledger update signs state using SHA-256 with machine-bound seeds. Malicious manual modifications to counter values are rejected with `tampering detected`.
+  - **Carrier & Archive Transparency**: guards can be armed across standard `.svault` containers, streaming files, or steganography carriers (PNG, WAV, BMP).
 - **3-Pass Secure File Shredder (`shred`)** — overwrites sensitive plaintext files with `0x00`, `0xFF`, and CSPRNG random bytes before unlinking.
 - **Single Static Binary** — compiled with `+crt-static`, `opt-level = "z"`, LTO, and stripped symbols. Zero external runtime dependencies.
 
@@ -288,6 +296,25 @@ svault inspect large_dataset.svault --json
 svault compare cover.bmp stego.bmp
 svault compare cover.png stego.png --json
 svault diff original.wav stego.wav --detailed
+
+# 44. Arm a vault with a 3-attempt self-shredding guard and dead-man switch
+svault encrypt -i secret.txt -o guarded.svault -p "vault-pass" --max-attempts 3 --dead-man 7d --guard-companion
+
+# 45. Arm an existing carrier or vault file directly
+svault guard arm -t stego.png --max-attempts 3 --companion
+svault guard arm -t vault.svault --max-attempts 5 --dead-man 24h
+
+# 46. Inspect guard status and remaining attempts (human-readable and JSON)
+svault guard status -t guarded.svault
+svault guard status -t guarded.svault --json
+
+# 47. Check-in to refresh dead-man switch deadline or reset attempt counter
+svault guard checkin -t guarded.svault --interval 30d
+svault guard reset -t guarded.svault
+
+# 48. Disarm a guard or trigger emergency multi-pass file shredding
+svault guard disarm -t guarded.svault
+svault guard trigger -t guarded.svault --force --passes 3
 ```
 
 ### License & Attribution
@@ -549,6 +576,30 @@ svault stream decrypt -i db.svault -o restored_db.backup -p "스트리밍비밀�
 # 42. 복호화 없이 스트리밍 컨테이너 메타데이터 검사 (텍스트 및 JSON)
 svault stream inspect large_dataset.svault
 svault inspect large_dataset.svault --json
+
+# 43. 원본 캐리어와 스테고 캐리어 간 시각/음향 품질 및 바이트 엔트로피 대조
+svault compare cover.bmp stego.bmp
+svault compare cover.png stego.png --json
+svault diff original.wav stego.wav --detailed
+
+# 44. 3회 연속 암호 오입력 시 파일 영구 파쇄 및 7일 데드맨 스위치 가드 장착
+svault encrypt -i secret.txt -o guarded.svault -p "금고비밀번호" --max-attempts 3 --dead-man 7d --guard-companion
+
+# 45. 기존 스테고 캐리어 또는 볼트 파일에 가드 직접 무장
+svault guard arm -t stego.png --max-attempts 3 --companion
+svault guard arm -t vault.svault --max-attempts 5 --dead-man 24h
+
+# 46. 가드 상태 및 잔여 시도 횟수 점검 (텍스트 및 JSON)
+svault guard status -t guarded.svault
+svault guard status -t guarded.svault --json
+
+# 47. 데드맨 스위치 체크인(기한 연장) 및 실패 카운터 리셋
+svault guard checkin -t guarded.svault --interval 30d
+svault guard reset -t guarded.svault
+
+# 48. 가드 해제(Disarm) 및 긴급 즉각 다중 패스 파쇄(Emergency Trigger)
+svault guard disarm -t guarded.svault
+svault guard trigger -t guarded.svault --force --passes 3
 ```
 
 ### 저작권 및 라이선스

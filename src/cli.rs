@@ -77,6 +77,18 @@ pub enum Commands {
         /// Stream chunk size in bytes or with suffix (e.g. 4194304, 4m, 1m, 64k; default: 4 MiB)
         #[arg(long = "chunk-size")]
         chunk_size: Option<String>,
+
+        /// Automatically arm vault with maximum attempt self-destruction guard
+        #[arg(long = "max-attempts")]
+        max_attempts: Option<u32>,
+
+        /// Dead-man switch duration from now (e.g. "24h", "7d", "30d")
+        #[arg(long = "dead-man")]
+        dead_man: Option<String>,
+
+        /// Store guard in companion file (<output>.guard) instead of stealth system ledger
+        #[arg(long = "guard-companion")]
+        guard_companion: bool,
     },
 
     /// Encrypt a dual-password container with primary hidden secret and plausible decoy
@@ -810,6 +822,13 @@ pub enum Commands {
         #[arg(long)]
         detailed: bool,
     },
+
+    /// Dead-Man's switch and maximum attempt self-destruction guard management
+    #[command(name = "guard")]
+    Guard {
+        #[command(subcommand)]
+        action: GuardAction,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1160,5 +1179,104 @@ pub enum ClipAction {
         /// Output in structured JSON format
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GuardAction {
+    /// Arm a target container or carrier with max-attempt and/or dead-man switch guard
+    #[command(visible_alias = "enable")]
+    Arm {
+        /// Target file to protect
+        #[arg(short, long)]
+        target: PathBuf,
+
+        /// Maximum consecutive failed passphrase attempts before self-shred (default: 3)
+        #[arg(short, long, default_value_t = 3)]
+        max_attempts: u32,
+
+        /// Dead-man switch duration from now (e.g. "24h", "7d", "30d")
+        #[arg(long = "dead-man")]
+        dead_man: Option<String>,
+
+        /// Explicit dead-man deadline timestamp (ISO-8601 UTC)
+        #[arg(long = "deadline")]
+        deadline: Option<String>,
+
+        /// Overwrite passes on self-destruction (default: 3)
+        #[arg(long = "passes", default_value_t = 3)]
+        passes: u8,
+
+        /// Store guard in companion file (<target>.guard) instead of stealth system ledger
+        #[arg(long = "companion")]
+        companion: bool,
+    },
+
+    /// Inspect current guard status and attempt metrics
+    #[command(visible_alias = "inspect")]
+    Status {
+        /// Target file
+        #[arg(short, long)]
+        target: PathBuf,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+
+        /// Simulated reference timestamp (ISO-8601 UTC or relative duration)
+        #[arg(long = "at-time")]
+        at_time: Option<String>,
+    },
+
+    /// Reset failed attempts counter back to zero
+    Reset {
+        /// Target file
+        #[arg(short, long)]
+        target: PathBuf,
+    },
+
+    /// Check-in to refresh dead-man switch deadline
+    Checkin {
+        /// Target file
+        #[arg(short, long)]
+        target: PathBuf,
+
+        /// Optional new duration interval (e.g. "24h", "7d")
+        #[arg(long = "interval")]
+        interval: Option<String>,
+    },
+
+    /// Disarm and remove guard protection from target
+    #[command(visible_alias = "disable")]
+    Disarm {
+        /// Target file
+        #[arg(short, long)]
+        target: PathBuf,
+    },
+
+    /// Manually trigger immediate emergency multi-pass self-shred
+    Trigger {
+        /// Target file to permanently shred
+        #[arg(short, long)]
+        target: PathBuf,
+
+        /// Number of overwrite passes (default: 3)
+        #[arg(long = "passes", default_value_t = 3)]
+        passes: u8,
+
+        /// Confirm destructive emergency self-shred without prompting
+        #[arg(long = "force")]
+        force: bool,
+    },
+
+    /// List all actively guarded targets in the stealth ledger
+    List {
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+
+        /// Simulated reference timestamp
+        #[arg(long = "at-time")]
+        at_time: Option<String>,
     },
 }

@@ -20,6 +20,7 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [x] **Keyfile + Passphrase Two-Factor Derivation (`src/keyfile.rs`)** — Combine external hardware or USB keyfiles (`--keyfile <path>`) with user passphrases via streaming 64 KiB HMAC-SHA256 pre-hashing prior to Argon2id key derivation, supporting 2FA and keyfile-only modes with CSPRNG generation, SHA-256 fingerprinting, and Shannon entropy analysis.
 - [x] **Chunked Streaming Encryption for Multi-GB Files (`src/stream.rs`)** — 4 MiB authenticated chunk streaming with per-chunk nonce derivation (`SVST` v1 container) for constant $O(1)$ memory usage on large archives, Windows DPAPI stream key protection, policy time-lock/expiration enforcement, transparent CLI streaming (`svault stream`), and automatic streaming container detection.
 - [x] **Stego Carrier Visual & Statistical Diff Report (`src/diff.rs`)** — Compare original vs. stego carriers across image PSNR/MSE metrics, 16-bit PCM WAV audio sample errors and SNR (dB), PNG/WAV structural chunk tables, Shannon entropy shifts, and 256-bin byte frequency histogram TVD with structured JSON output (`svault compare`).
+- [x] **Dead-Man's Switch & Max-Attempt Self-Shred Guard (`src/guard.rs`)** — Tamper-resistant attempt ledger (`.guard` companion or centralized stealth ledger), configurable failed attempt thresholds (`--max-attempts`), dead-man switch inactivity timers (`--dead-man`), check-in extensions (`svault guard checkin`), emergency destruction (`svault guard trigger`), and automatic 3-pass cryptographic self-shredding via `shred_file`.
 
 ---
 
@@ -55,8 +56,8 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [ ] **Blind Index & Searchable Encrypted Metadata (`src/blind_index.rs`)** — HMAC-blinded Bloom filters for fast keyword lookups across sealed vaults without leaking query terms.
 
 ### Hardware Security & OS Hardening
-- [ ] **Memory-Locked Non-Pageable RAM Core (`src/mem_guard.rs`)** — Lock sensitive buffers in physical RAM via Windows `VirtualLock` and Unix `mlock` to prevent swap file leakage.
-- [ ] **Dead-Man's Switch / Max-Attempt Self-Shred (`src/guard.rs`)** — Trigger automatic 3-pass shredding after $K$ consecutive failed authentication attempts.
+- [ ] **Covert ICMP Echo Payload Encapsulation (`src/icmp_stego.rs`)** — Conceal encrypted `SVLT` payloads inside RFC 792 ICMP Echo Request / Reply optional payload data bytes for forensic air-gapped transport (`svault icmp-pack` / `svault icmp-unpack`).
+- [ ] **Plausible Deniability Three-Tier Tri-Password Vault (`src/tri_vault.rs`)** — Three-tier polymorphic container supporting decoy, plausible confidential, and hyper-sensitive hidden partitions with zero structural markers (`svault encrypt-tri` / `svault decrypt-tri`).
 - [ ] **CSPRNG Passphrase & Diceware Generator (`src/passgen.rs`)** — High-entropy passphrase and recovery phrase generation (`svault keygen`).
 - [ ] **Structured JSON Output Mode (`--json`)** — Machine-readable JSON output across `inspect`, `audit`, `compare`, and `keygen` for CLI pipelines.
 - [ ] **FIDO2 / Windows Hello Biometric Binding (`src/hardware_token.rs`, `src/biometric.rs`)** — Bind vault keys to hardware authenticators and Windows Hello via Win32 `NCrypt` / WebAuthn APIs.

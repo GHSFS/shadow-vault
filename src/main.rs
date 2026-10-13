@@ -12,6 +12,7 @@ mod crypto;
 mod decoy;
 mod diff;
 mod error;
+mod guard;
 mod keyfile;
 mod policy;
 mod shamir;
@@ -23,7 +24,7 @@ mod wav;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, ClipAction, Commands, KeyfileAction, StreamAction, TotpAction};
+use cli::{Cli, ClipAction, Commands, GuardAction, KeyfileAction, StreamAction, TotpAction};
 use colored::Colorize;
 use std::fs;
 use std::io::{Read, Write};
@@ -75,6 +76,79 @@ fn parse_cli_at_time(at_time: Option<&str>) -> Result<Option<u64>> {
     }
 }
 
+fn check_guard_preflight(target: &Path, at_time: Option<u64>) -> Result<()> {
+    if let Some(guard_action) = guard::check_guard_before_attempt(target, at_time)? {
+        match guard_action {
+            guard::GuardAction::Allowed { remaining_attempts } => {
+                if let Some(rem) = remaining_attempts {
+                    if rem <= 2 {
+                        eprintln!(
+                            "{} Vault has {} attempt(s) remaining before self-destruction.",
+                            "WARNING:".yellow().bold(),
+                            rem
+                        );
+                    }
+                }
+            }
+            guard::GuardAction::SelfShredTriggered {
+                reason,
+                target_path,
+                ..
+            } => {
+                eprintln!(
+                    "{} VAULT SELF-DESTRUCTION TRIGGERED: {:?} on {}",
+                    "SECURITY ALERT:".red().bold(),
+                    reason,
+                    target_path.display()
+                );
+                anyhow::bail!(
+                    "vault access refused: guard triggered self-destruction ({:?})",
+                    reason
+                );
+            }
+            guard::GuardAction::AttemptFailed { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+fn handle_guard_post_failure(target: &Path, at_time: Option<u64>) -> Result<()> {
+    let action = guard::record_failure(target, at_time)?;
+    match action {
+        guard::GuardAction::SelfShredTriggered {
+            reason,
+            target_path,
+            passes,
+        } => {
+            eprintln!(
+                "{} MAXIMUM PASSPHRASE ATTEMPTS EXCEEDED — {} was permanently shredded ({} passes)",
+                "CRITICAL SECURITY ALERT:".red().bold(),
+                target_path.display(),
+                passes
+            );
+            anyhow::bail!(
+                "authentication failed: attempt limit reached, vault permanently shredded ({:?})",
+                reason
+            );
+        }
+        guard::GuardAction::AttemptFailed {
+            failed_attempts,
+            max_attempts,
+            remaining,
+        } => {
+            eprintln!(
+                "{} Authentication failed (attempt {}/{}). {} attempt(s) remaining before self-destruction.",
+                "WARNING:".yellow().bold(),
+                failed_attempts,
+                max_attempts,
+                remaining
+            );
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_standard_decrypt(
     input: std::path::PathBuf,
@@ -86,6 +160,9 @@ fn execute_standard_decrypt(
     clip_ttl: u64,
     at_time: Option<String>,
 ) -> Result<()> {
+    let at_time_val = parse_cli_at_time(at_time.as_deref())?;
+    check_guard_preflight(&input, at_time_val)?;
+
     let raw_container = fs::read(&input)
         .with_context(|| format!("failed to read container: {}", input.display()))?;
     let container = if armor::is_armored(&raw_container) {
@@ -95,39 +172,52 @@ fn execute_standard_decrypt(
     } else {
         raw_container
     };
-    let at_time_val = parse_cli_at_time(at_time.as_deref())?;
-    let mut plain = if let Some(d_pass) = decoy_passphrase {
-        if crypto::is_decoy_container(&container) {
-            decoy::open_decoy_explicit_with_keyfile(
+
+    let decrypt_result: Result<Vec<u8>> = (|| {
+        if let Some(d_pass) = decoy_passphrase {
+            if crypto::is_decoy_container(&container) {
+                Ok(decoy::open_decoy_explicit_with_keyfile(
+                    &container,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    Some(&d_pass),
+                )?)
+            } else {
+                Ok(crypto::open_at_with_keyfile(
+                    &container,
+                    Some(&d_pass),
+                    keyfile.as_deref(),
+                    at_time_val,
+                )?)
+            }
+        } else if crypto::is_decoy_container(&container) {
+            Ok(decoy::open_decoy_explicit_with_keyfile(
                 &container,
                 passphrase.as_deref(),
                 keyfile.as_deref(),
-                Some(&d_pass),
-            )?
-        } else {
-            crypto::open_at_with_keyfile(
+                None,
+            )?)
+        } else if passphrase.is_some() || keyfile.is_some() {
+            Ok(crypto::open_at_with_keyfile(
                 &container,
-                Some(&d_pass),
+                passphrase.as_deref(),
                 keyfile.as_deref(),
                 at_time_val,
-            )?
+            )?)
+        } else {
+            anyhow::bail!("either --passphrase, --keyfile, or --decoy-passphrase must be provided");
         }
-    } else if crypto::is_decoy_container(&container) {
-        decoy::open_decoy_explicit_with_keyfile(
-            &container,
-            passphrase.as_deref(),
-            keyfile.as_deref(),
-            None,
-        )?
-    } else if passphrase.is_some() || keyfile.is_some() {
-        crypto::open_at_with_keyfile(
-            &container,
-            passphrase.as_deref(),
-            keyfile.as_deref(),
-            at_time_val,
-        )?
-    } else {
-        anyhow::bail!("either --passphrase, --keyfile, or --decoy-passphrase must be provided");
+    })();
+
+    let mut plain = match decrypt_result {
+        Ok(data) => {
+            let _ = guard::record_success(&input, at_time_val);
+            data
+        }
+        Err(err) => {
+            handle_guard_post_failure(&input, at_time_val)?;
+            return Err(err);
+        }
     };
     if let Some(ref out_path) = output {
         fs::write(out_path, &plain)
@@ -181,6 +271,9 @@ fn main() -> Result<()> {
             policy_desc,
             stream,
             chunk_size,
+            max_attempts,
+            dead_man,
+            guard_companion,
         } => {
             let policy = parse_cli_policy(
                 not_before.as_deref(),
@@ -278,6 +371,34 @@ fn main() -> Result<()> {
                 dpapi,
                 policy_msg
             );
+            if max_attempts.is_some() || dead_man.is_some() {
+                let k = max_attempts.unwrap_or(3);
+                let dead_man_seconds = match dead_man {
+                    Some(ref dm) => Some(policy::parse_duration(dm)?),
+                    None => None,
+                };
+                let g = guard::arm_guard(
+                    &output,
+                    k,
+                    dead_man_seconds,
+                    None,
+                    guard::DEFAULT_SHRED_PASSES,
+                    guard_companion,
+                    None,
+                )?;
+                let dm_str = g
+                    .dead_man_interval_seconds
+                    .map(|s| format!(" (dead-man: {s}s)"))
+                    .unwrap_or_default();
+                println!(
+                    "{} armed guard for {} (max_attempts={}{}, companion={})",
+                    "ok".green().bold(),
+                    output.display(),
+                    g.max_attempts,
+                    dm_str,
+                    g.companion
+                );
+            }
         }
         Commands::EncryptDecoy {
             primary,
@@ -337,13 +458,24 @@ fn main() -> Result<()> {
                     anyhow::anyhow!("--output is required for streaming decryption")
                 })?;
                 let at_time_val = parse_cli_at_time(at_time.as_deref())?;
-                let summary = stream::decrypt_file_stream(
+                check_guard_preflight(&input, at_time_val)?;
+                let res = stream::decrypt_file_stream(
                     &input,
                     out_path,
                     passphrase.as_deref(),
                     keyfile.as_deref(),
                     at_time_val,
-                )?;
+                );
+                let summary = match res {
+                    Ok(s) => {
+                        let _ = guard::record_success(&input, at_time_val);
+                        s
+                    }
+                    Err(e) => {
+                        handle_guard_post_failure(&input, at_time_val)?;
+                        return Err(e.into());
+                    }
+                };
                 println!(
                     "{} decrypted {} bytes in {} chunks -> {}",
                     "ok".green().bold(),
@@ -467,42 +599,57 @@ fn main() -> Result<()> {
         } => {
             let png = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego PNG: {}", carrier.display()))?;
-            let sealed = stego::extract_from_png(&png)?;
             let at_time_val = parse_cli_at_time(at_time.as_deref())?;
-            let mut plain = if let Some(d_pass) = decoy_passphrase {
-                if crypto::is_decoy_container(&sealed) {
-                    decoy::open_decoy_explicit_with_keyfile(
+            check_guard_preflight(&carrier, at_time_val)?;
+
+            let extract_res: Result<Vec<u8>> = (|| {
+                let sealed = stego::extract_from_png(&png)?;
+                if let Some(d_pass) = decoy_passphrase {
+                    if crypto::is_decoy_container(&sealed) {
+                        Ok(decoy::open_decoy_explicit_with_keyfile(
+                            &sealed,
+                            passphrase.as_deref(),
+                            keyfile.as_deref(),
+                            Some(&d_pass),
+                        )?)
+                    } else {
+                        Ok(crypto::open_at_with_keyfile(
+                            &sealed,
+                            Some(&d_pass),
+                            keyfile.as_deref(),
+                            at_time_val,
+                        )?)
+                    }
+                } else if crypto::is_decoy_container(&sealed) {
+                    Ok(decoy::open_decoy_explicit_with_keyfile(
                         &sealed,
                         passphrase.as_deref(),
                         keyfile.as_deref(),
-                        Some(&d_pass),
-                    )?
-                } else {
-                    crypto::open_at_with_keyfile(
+                        None,
+                    )?)
+                } else if passphrase.is_some() || keyfile.is_some() {
+                    Ok(crypto::open_at_with_keyfile(
                         &sealed,
-                        Some(&d_pass),
+                        passphrase.as_deref(),
                         keyfile.as_deref(),
                         at_time_val,
-                    )?
+                    )?)
+                } else {
+                    anyhow::bail!(
+                        "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
+                    );
                 }
-            } else if crypto::is_decoy_container(&sealed) {
-                decoy::open_decoy_explicit_with_keyfile(
-                    &sealed,
-                    passphrase.as_deref(),
-                    keyfile.as_deref(),
-                    None,
-                )?
-            } else if passphrase.is_some() || keyfile.is_some() {
-                crypto::open_at_with_keyfile(
-                    &sealed,
-                    passphrase.as_deref(),
-                    keyfile.as_deref(),
-                    at_time_val,
-                )?
-            } else {
-                anyhow::bail!(
-                    "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
-                );
+            })();
+
+            let mut plain = match extract_res {
+                Ok(data) => {
+                    let _ = guard::record_success(&carrier, at_time_val);
+                    data
+                }
+                Err(err) => {
+                    handle_guard_post_failure(&carrier, at_time_val)?;
+                    return Err(err);
+                }
             };
             if let Some(ref out_path) = output {
                 fs::write(out_path, &plain).with_context(|| {
@@ -626,43 +773,58 @@ fn main() -> Result<()> {
         } => {
             let wav_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego WAV: {}", carrier.display()))?;
-            let effective_mode = if lsb { wav::ExtractWavMode::Lsb } else { mode };
-            let sealed = wav::extract_from_wav(&wav_bytes, effective_mode)?;
             let at_time_val = parse_cli_at_time(at_time.as_deref())?;
-            let mut plain = if let Some(d_pass) = decoy_passphrase {
-                if crypto::is_decoy_container(&sealed) {
-                    decoy::open_decoy_explicit_with_keyfile(
+            check_guard_preflight(&carrier, at_time_val)?;
+
+            let extract_res: Result<Vec<u8>> = (|| {
+                let effective_mode = if lsb { wav::ExtractWavMode::Lsb } else { mode };
+                let sealed = wav::extract_from_wav(&wav_bytes, effective_mode)?;
+                if let Some(d_pass) = decoy_passphrase {
+                    if crypto::is_decoy_container(&sealed) {
+                        Ok(decoy::open_decoy_explicit_with_keyfile(
+                            &sealed,
+                            passphrase.as_deref(),
+                            keyfile.as_deref(),
+                            Some(&d_pass),
+                        )?)
+                    } else {
+                        Ok(crypto::open_at_with_keyfile(
+                            &sealed,
+                            Some(&d_pass),
+                            keyfile.as_deref(),
+                            at_time_val,
+                        )?)
+                    }
+                } else if crypto::is_decoy_container(&sealed) {
+                    Ok(decoy::open_decoy_explicit_with_keyfile(
                         &sealed,
                         passphrase.as_deref(),
                         keyfile.as_deref(),
-                        Some(&d_pass),
-                    )?
-                } else {
-                    crypto::open_at_with_keyfile(
+                        None,
+                    )?)
+                } else if passphrase.is_some() || keyfile.is_some() {
+                    Ok(crypto::open_at_with_keyfile(
                         &sealed,
-                        Some(&d_pass),
+                        passphrase.as_deref(),
                         keyfile.as_deref(),
                         at_time_val,
-                    )?
+                    )?)
+                } else {
+                    anyhow::bail!(
+                        "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
+                    );
                 }
-            } else if crypto::is_decoy_container(&sealed) {
-                decoy::open_decoy_explicit_with_keyfile(
-                    &sealed,
-                    passphrase.as_deref(),
-                    keyfile.as_deref(),
-                    None,
-                )?
-            } else if passphrase.is_some() || keyfile.is_some() {
-                crypto::open_at_with_keyfile(
-                    &sealed,
-                    passphrase.as_deref(),
-                    keyfile.as_deref(),
-                    at_time_val,
-                )?
-            } else {
-                anyhow::bail!(
-                    "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
-                );
+            })();
+
+            let mut plain = match extract_res {
+                Ok(data) => {
+                    let _ = guard::record_success(&carrier, at_time_val);
+                    data
+                }
+                Err(err) => {
+                    handle_guard_post_failure(&carrier, at_time_val)?;
+                    return Err(err);
+                }
             };
             if let Some(ref out_path) = output {
                 fs::write(out_path, &plain).with_context(|| {
@@ -780,42 +942,57 @@ fn main() -> Result<()> {
         } => {
             let bmp_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego BMP: {}", carrier.display()))?;
-            let sealed = bmp::extract_from_bmp(&bmp_bytes)?;
             let at_time_val = parse_cli_at_time(at_time.as_deref())?;
-            let mut plain = if let Some(d_pass) = decoy_passphrase {
-                if crypto::is_decoy_container(&sealed) {
-                    decoy::open_decoy_explicit_with_keyfile(
+            check_guard_preflight(&carrier, at_time_val)?;
+
+            let extract_res: Result<Vec<u8>> = (|| {
+                let sealed = bmp::extract_from_bmp(&bmp_bytes)?;
+                if let Some(d_pass) = decoy_passphrase {
+                    if crypto::is_decoy_container(&sealed) {
+                        Ok(decoy::open_decoy_explicit_with_keyfile(
+                            &sealed,
+                            passphrase.as_deref(),
+                            keyfile.as_deref(),
+                            Some(&d_pass),
+                        )?)
+                    } else {
+                        Ok(crypto::open_at_with_keyfile(
+                            &sealed,
+                            Some(&d_pass),
+                            keyfile.as_deref(),
+                            at_time_val,
+                        )?)
+                    }
+                } else if crypto::is_decoy_container(&sealed) {
+                    Ok(decoy::open_decoy_explicit_with_keyfile(
                         &sealed,
                         passphrase.as_deref(),
                         keyfile.as_deref(),
-                        Some(&d_pass),
-                    )?
-                } else {
-                    crypto::open_at_with_keyfile(
+                        None,
+                    )?)
+                } else if passphrase.is_some() || keyfile.is_some() {
+                    Ok(crypto::open_at_with_keyfile(
                         &sealed,
-                        Some(&d_pass),
+                        passphrase.as_deref(),
                         keyfile.as_deref(),
                         at_time_val,
-                    )?
+                    )?)
+                } else {
+                    anyhow::bail!(
+                        "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
+                    );
                 }
-            } else if crypto::is_decoy_container(&sealed) {
-                decoy::open_decoy_explicit_with_keyfile(
-                    &sealed,
-                    passphrase.as_deref(),
-                    keyfile.as_deref(),
-                    None,
-                )?
-            } else if passphrase.is_some() || keyfile.is_some() {
-                crypto::open_at_with_keyfile(
-                    &sealed,
-                    passphrase.as_deref(),
-                    keyfile.as_deref(),
-                    at_time_val,
-                )?
-            } else {
-                anyhow::bail!(
-                    "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
-                );
+            })();
+
+            let mut plain = match extract_res {
+                Ok(data) => {
+                    let _ = guard::record_success(&carrier, at_time_val);
+                    data
+                }
+                Err(err) => {
+                    handle_guard_post_failure(&carrier, at_time_val)?;
+                    return Err(err);
+                }
             };
             if let Some(ref out_path) = output {
                 fs::write(out_path, &plain).with_context(|| {
@@ -1655,6 +1832,9 @@ fn main() -> Result<()> {
         } => {
             diff::handle_compare_command(&original, &stego, json, detailed)?;
         }
+        Commands::Guard { action } => {
+            handle_guard_command(action)?;
+        }
     }
 
     Ok(())
@@ -2383,7 +2563,17 @@ fn handle_unpack_dir_command(
     };
 
     let at_time_val = parse_cli_at_time(at_time)?;
-    let plain = crypto::open_at_with_keyfile(&container, passphrase, keyfile, at_time_val)?;
+    check_guard_preflight(input, at_time_val)?;
+    let plain = match crypto::open_at_with_keyfile(&container, passphrase, keyfile, at_time_val) {
+        Ok(data) => {
+            let _ = guard::record_success(input, at_time_val);
+            data
+        }
+        Err(e) => {
+            handle_guard_post_failure(input, at_time_val)?;
+            return Err(e.into());
+        }
+    };
 
     if list {
         let summary = archive::list_archive(&plain)?;
@@ -2561,16 +2751,27 @@ fn handle_stream_command(action: StreamAction) -> Result<()> {
             json,
         } => {
             let at_time_val = parse_cli_at_time(at_time.as_deref())?;
-            let summary = stream::decrypt_file_stream(
+            check_guard_preflight(&input, at_time_val)?;
+            let res = stream::decrypt_file_stream(
                 &input,
                 &output,
                 passphrase.as_deref(),
                 keyfile.as_deref(),
                 at_time_val,
-            )?;
+            );
             if let Some(ref mut p) = passphrase {
                 p.zeroize();
             }
+            let summary = match res {
+                Ok(s) => {
+                    let _ = guard::record_success(&input, at_time_val);
+                    s
+                }
+                Err(e) => {
+                    handle_guard_post_failure(&input, at_time_val)?;
+                    return Err(e.into());
+                }
+            };
             if json {
                 let out = serde_json::json!({
                     "input": input.display().to_string(),
@@ -2657,6 +2858,245 @@ fn handle_stream_command(action: StreamAction) -> Result<()> {
                     }
                     if let Some(ref desc) = pol.description {
                         println!("policy_desc:       {}", desc);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_guard_command(action: GuardAction) -> Result<()> {
+    match action {
+        GuardAction::Arm {
+            target,
+            max_attempts,
+            dead_man,
+            deadline,
+            passes,
+            companion,
+        } => {
+            let dead_man_seconds = match dead_man {
+                Some(ref s) => Some(policy::parse_duration(s)?),
+                None => None,
+            };
+            let now = policy::current_utc_timestamp();
+            let dead_man_dl = match deadline {
+                Some(ref s) => Some(policy::parse_timestamp_or_duration(s, now)?),
+                None => None,
+            };
+            let policy = guard::arm_guard(
+                &target,
+                max_attempts,
+                dead_man_seconds,
+                dead_man_dl,
+                passes,
+                companion,
+                Some(now),
+            )?;
+            println!(
+                "{} armed guard on {} (max_attempts={}, passes={}, companion={})",
+                "ok".green().bold(),
+                target.display(),
+                policy.max_attempts,
+                policy.shred_passes,
+                policy.companion
+            );
+            if let Some(dl) = policy.dead_man_deadline {
+                println!(
+                    "  dead-man deadline:     {} ({})",
+                    dl,
+                    policy::format_iso8601_utc(dl)
+                );
+            }
+        }
+        GuardAction::Status {
+            target,
+            json,
+            at_time,
+        } => {
+            let at_time_val = parse_cli_at_time(at_time.as_deref())?;
+            match guard::inspect_guard(&target, at_time_val)? {
+                Some(rep) => {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&rep)?);
+                    } else {
+                        println!("{}", "=== [GUARD STATUS] ===".bold());
+                        println!("  Target:                {}", rep.target);
+                        println!(
+                            "  Active:                {}",
+                            if rep.active {
+                                "yes".green()
+                            } else {
+                                "no".dimmed()
+                            }
+                        );
+                        println!("  Max Attempts:          {}", rep.max_attempts);
+                        println!(
+                            "  Failed Attempts:       {} (remaining: {})",
+                            if rep.failed_attempts > 0 {
+                                rep.failed_attempts.to_string().yellow().bold()
+                            } else {
+                                rep.failed_attempts.to_string().normal()
+                            },
+                            rep.remaining_attempts
+                        );
+                        println!("  Shred Passes:          {}", rep.shred_passes);
+                        println!(
+                            "  Created:               {} ({})",
+                            rep.created_at, rep.created_at_iso
+                        );
+                        if let Some(dl) = rep.dead_man_deadline {
+                            let exp_str = if rep.dead_man_expired {
+                                " [EXPIRED]".red().bold()
+                            } else {
+                                "".normal()
+                            };
+                            println!(
+                                "  Dead-Man Deadline:     {} ({}){}",
+                                dl,
+                                rep.dead_man_deadline_iso.as_deref().unwrap_or(""),
+                                exp_str
+                            );
+                            if let Some(rem) = rep.dead_man_remaining_seconds {
+                                println!("  Dead-Man Remaining:    {}s", rem);
+                            }
+                        } else {
+                            println!("  Dead-Man Switch:       none");
+                        }
+                        println!(
+                            "  Ledger Type:           {}",
+                            if rep.companion {
+                                "companion file"
+                            } else {
+                                "stealth system ledger"
+                            }
+                        );
+                        println!("  Ledger Path:           {}", rep.guard_file_path);
+                    }
+                }
+                None => {
+                    if json {
+                        let out = serde_json::json!({
+                            "target": target.display().to_string(),
+                            "active": false,
+                            "guard_present": false,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&out)?);
+                    } else {
+                        println!(
+                            "{} no active guard policy found for {}",
+                            "info:".cyan().bold(),
+                            target.display()
+                        );
+                    }
+                }
+            }
+        }
+        GuardAction::Reset { target } => {
+            let policy = guard::reset_guard(&target, None)?;
+            println!(
+                "{} reset failed attempts counter for {} (failed_attempts=0)",
+                "ok".green().bold(),
+                target.display()
+            );
+            if let Some(dl) = policy.dead_man_deadline {
+                println!(
+                    "  refreshed deadline:    {} ({})",
+                    dl,
+                    policy::format_iso8601_utc(dl)
+                );
+            }
+        }
+        GuardAction::Checkin { target, interval } => {
+            let interval_secs = match interval {
+                Some(ref s) => Some(policy::parse_duration(s)?),
+                None => None,
+            };
+            let policy = guard::checkin_guard(&target, interval_secs, None)?;
+            println!(
+                "{} checked-in dead-man switch for {}",
+                "ok".green().bold(),
+                target.display()
+            );
+            if let Some(dl) = policy.dead_man_deadline {
+                println!(
+                    "  new deadline:          {} ({})",
+                    dl,
+                    policy::format_iso8601_utc(dl)
+                );
+            }
+        }
+        GuardAction::Disarm { target } => {
+            let removed = guard::disarm_guard(&target)?;
+            if removed {
+                println!(
+                    "{} disarmed and removed guard protection from {}",
+                    "ok".green().bold(),
+                    target.display()
+                );
+            } else {
+                println!(
+                    "{} no active guard found to disarm for {}",
+                    "warning:".yellow().bold(),
+                    target.display()
+                );
+            }
+        }
+        GuardAction::Trigger {
+            target,
+            passes,
+            force,
+        } => {
+            if !force {
+                anyhow::bail!(
+                    "emergency trigger permanently shreds '{}' ({} passes). Specify --force to confirm.",
+                    target.display(),
+                    passes
+                );
+            }
+            let shredded = guard::emergency_trigger(&target, passes)?;
+            println!(
+                "{} emergency triggered: shredded {} bytes ({} passes) -> {}",
+                "ok".red().bold(),
+                shredded,
+                passes,
+                target.display()
+            );
+        }
+        GuardAction::List { json, at_time } => {
+            let at_time_val = parse_cli_at_time(at_time.as_deref())?;
+            let reports = guard::list_guards(at_time_val)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&reports)?);
+            } else {
+                println!("{}", "=== [ACTIVE GUARD LEDGERS] ===".bold());
+                if reports.is_empty() {
+                    println!("  (no active stealth guards registered)");
+                } else {
+                    println!(
+                        "  {:<35} {:<10} {:<12} {:<25}",
+                        "TARGET", "ATTEMPTS", "DEAD-MAN", "LEDGER"
+                    );
+                    println!("  {}", "-".repeat(85));
+                    for r in &reports {
+                        let att_str = format!("{}/{}", r.failed_attempts, r.max_attempts);
+                        let dm_str = if let Some(_dl) = r.dead_man_deadline {
+                            if r.dead_man_expired {
+                                "EXPIRED".to_string()
+                            } else {
+                                format!("{}s", r.dead_man_remaining_seconds.unwrap_or(0))
+                            }
+                        } else {
+                            "none".to_string()
+                        };
+                        println!(
+                            "  {:<35} {:<10} {:<12} {:<25}",
+                            r.target,
+                            att_str,
+                            dm_str,
+                            if r.companion { "companion" } else { "stealth" }
+                        );
                     }
                 }
             }

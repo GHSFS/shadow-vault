@@ -19,6 +19,7 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [x] **Time-Lock & Expiration Policy Headers (`src/policy.rs`)** — Authenticate `not_before` and `expires_at` UTC timestamps via ChaCha20-Poly1305 AEAD additional authenticated data (`aad`) with Howard Hinnant calendar conversions, ISO-8601 formatting/parsing, and temporal access policy enforcement (`--not-before`, `--expires-at`, `--expires-in`, `--at-time`).
 - [x] **Keyfile + Passphrase Two-Factor Derivation (`src/keyfile.rs`)** — Combine external hardware or USB keyfiles (`--keyfile <path>`) with user passphrases via streaming 64 KiB HMAC-SHA256 pre-hashing prior to Argon2id key derivation, supporting 2FA and keyfile-only modes with CSPRNG generation, SHA-256 fingerprinting, and Shannon entropy analysis.
 - [x] **Chunked Streaming Encryption for Multi-GB Files (`src/stream.rs`)** — 4 MiB authenticated chunk streaming with per-chunk nonce derivation (`SVST` v1 container) for constant $O(1)$ memory usage on large archives, Windows DPAPI stream key protection, policy time-lock/expiration enforcement, transparent CLI streaming (`svault stream`), and automatic streaming container detection.
+- [x] **Stego Carrier Visual & Statistical Diff Report (`src/diff.rs`)** — Compare original vs. stego carriers across image PSNR/MSE metrics, 16-bit PCM WAV audio sample errors and SNR (dB), PNG/WAV structural chunk tables, Shannon entropy shifts, and 256-bin byte frequency histogram TVD with structured JSON output (`svault compare`).
 
 ---
 
@@ -32,7 +33,6 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [ ] **Interactive In-Memory Vault Shell (`svault repl`)** — Unlock a key-value secret store once in non-pageable memory and query or update entries interactively without touching disk in plaintext.
 
 ### Advanced Steganography & Covert Transports
-- [ ] **Stego Carrier Visual & Statistical Diff Report (`src/diff.rs`)** — Compute PSNR, MSE, byte-histogram deltas, and chunk table diffs between original and stego carriers (`svault compare`).
 - [ ] **MP3 ID3v2 & Frame Padding Steganography (`src/mp3.rs`)** — Embed encrypted containers inside MPEG Audio Layer III files while preserving playback and stream CRC integrity (`svault embed-mp3` / `svault extract-mp3`).
 - [ ] **WebP Lossless Stego Carrier Engine (`src/webp.rs`)** — RIFF/WEBP VP8L lossless pixel steganography with metadata preservation (`svault embed-webp` / `svault extract-webp`).
 - [ ] **FLAC Lossless Audio Carrier Steganography (`src/flac.rs`)** — Conceal encrypted containers inside FLAC `APPLICATION` metadata blocks and verbatim subframe residual LSB channels (`svault embed-flac` / `svault extract-flac`).
@@ -51,6 +51,7 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [ ] **Stateful Hash-Based Signatures (`src/hash_sig.rs`)** — XMSS / LMS post-quantum signatures for long-term container attestation.
 - [ ] **Threshold Schnorr & Ed25519 Signatures (`src/threshold_sig.rs`)** — Cooperative $T$-of-$N$ signing without reconstructing the private key in a single buffer.
 - [ ] **Zero-Knowledge Container Authenticity Proofs (`src/zkp.rs`)** — Prove possession or authenticity of a sealed payload without revealing the underlying secret (`svault zkp-prove` / `svault zkp-verify`).
+- [ ] **Zero-Knowledge Range & Attribute Membership Proofs (`src/zk_attribute.rs`)** — Generate zero-knowledge Bulletproofs-style range proofs and cryptographic set membership proofs over encrypted attribute fields without revealing underlying secret values (`svault zk-prove` / `svault zk-verify`).
 - [ ] **Blind Index & Searchable Encrypted Metadata (`src/blind_index.rs`)** — HMAC-blinded Bloom filters for fast keyword lookups across sealed vaults without leaking query terms.
 
 ### Hardware Security & OS Hardening

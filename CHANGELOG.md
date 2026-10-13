@@ -5,6 +5,31 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-10-13
+
+### Added
+- Steganography Carrier Visual & Statistical Diff Report Engine (`src/diff.rs`):
+  - Visual image signal quality metrics (MSE, PSNR, MAE):
+    - Computes pixel channel squared errors, peak signal-to-noise ratio in decibels ($PSNR = 10 \cdot \log_{10}(255^2 / MSE)$), mean absolute error, and altered pixel percentage for 24-bit uncompressed BMP and PNG images.
+    - Bit flip classification: isolates LSB (bit 0) modulations from non-LSB flips to verify pure micro-modulation steganography.
+    - Anomaly detection for BMP 4-byte row stride padding modifications.
+  - Acoustic audio signal quality metrics (SNR, PSNR, MSE):
+    - Evaluates 16-bit PCM audio sample errors, signal-to-noise ratio in decibels ($SNR = 10 \cdot \log_{10}(\sum S_{orig}^2 / \sum (S_{orig} - S_{stego})^2)$), and sample alteration ratios for WAV audio carriers.
+  - Structural carrier chunk table diff:
+    - PNG chunk inspection: compares `IHDR`, `IDAT`, `IEND`, and injected `svLt` ancillary chunks, verifying whether IDAT raster pixels remain 100% unaltered.
+    - WAV RIFF subchunk comparison: tracks added `svLt` metadata subchunks and PCM `data` subchunk modifications.
+  - Information-theoretic & byte frequency histogram divergence:
+    - Shannon entropy shift ($\Delta H = H_{stego} - H_{orig}$) in bits per byte.
+    - 256-bin byte frequency Total Variation Distance ($TVD = \frac{1}{2} \sum |p_{stego} - p_{orig}|$) and Chi-Square divergence ($\chi^2$).
+    - Byte-level Hamming distance bit flips and modified byte span ranges.
+- Dedicated `compare` CLI command (`svault compare <ORIGINAL> <STEGO>`):
+  - Subcommand aliases: `svault diff`.
+  - Rich colored terminal report with carrier auto-detection, signal metrics, chunk table diffs, and steganographic verdict.
+  - `--json` machine-readable output mode for automated forensic analysis and CI pipelines.
+  - `--detailed` flag for extended byte span offsets and histogram delta bins.
+- Dedicated Domain Integration Test Suite (`tests/diff_test.rs`):
+  - 4 integration tests covering PNG lossless ancillary chunk comparison, BMP LSB micro-modulation analysis, WAV RIFF chunk vs LSB sample comparison, identical file baseline, binary diff with spans, and JSON output mode.
+
 ## [0.13.0] - 2026-10-13
 
 ### Added

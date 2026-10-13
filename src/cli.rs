@@ -790,6 +790,26 @@ pub enum Commands {
         #[command(subcommand)]
         action: StreamAction,
     },
+
+    /// Compare original carrier vs. stego carrier and generate visual/statistical diff report
+    #[command(name = "compare", visible_alias = "diff")]
+    Compare {
+        /// Original reference carrier or file path
+        #[arg(value_name = "ORIGINAL")]
+        original: PathBuf,
+
+        /// Stego or modified carrier or file path
+        #[arg(value_name = "STEGO")]
+        stego: PathBuf,
+
+        /// Output comparison report in structured JSON format
+        #[arg(long)]
+        json: bool,
+
+        /// Display extended per-channel histogram and modified byte spans
+        #[arg(long)]
+        detailed: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

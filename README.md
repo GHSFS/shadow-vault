@@ -106,6 +106,12 @@
   - **Chunk Nonce & AAD Derivation**: unique nonce per chunk preventing IV reuse; AAD incorporates chunk index, intermediate/final tag, salt, and policy hash to eliminate chunk reordering, truncation, or substitution.
   - **Zero Whole-File Buffering**: 2-buffer sliding window processes arbitrarily large files (0 bytes to multi-gigabytes) without memory exhaustion.
   - **Transparent Auto-Detection**: `svault decrypt` and `svault inspect` automatically recognize streaming containers and dispatch to the streaming engine.
+- **Stego Carrier Visual & Statistical Diff Report (`compare` / `diff`)** — compare reference carriers against stego-bearing media across visual, acoustic, and statistical dimensions:
+  - **Visual Image Quality (MSE & PSNR)**: evaluates pixel channel errors, peak signal-to-noise ratio in dB, mean absolute error (MAE), altered pixel count/ratio, and bit flip distributions (LSB vs non-LSB).
+  - **Acoustic Audio Quality (SNR & PSNR)**: evaluates 16-bit PCM sample errors, signal-to-noise ratio in dB, and sample alteration ratios for WAV audio carriers.
+  - **Structural Chunk Table Comparison**: inspects PNG ancillary chunks and WAV RIFF subchunks, identifying injected `svLt` metadata, offset locations, and byte lengths.
+  - **Information-Theoretic & Histogram Divergence**: computes Shannon entropy shifts ($\Delta H$), 256-bin byte frequency Total Variation Distance (TVD), Chi-Square divergence ($\chi^2$), and Hamming distance bit flips.
+  - **Structured JSON & Detailed Inspection**: supports `--json` for automated security pipelines and `--detailed` for modified byte spans and histogram deltas.
 - **3-Pass Secure File Shredder (`shred`)** — overwrites sensitive plaintext files with `0x00`, `0xFF`, and CSPRNG random bytes before unlinking.
 - **Single Static Binary** — compiled with `+crt-static`, `opt-level = "z"`, LTO, and stripped symbols. Zero external runtime dependencies.
 
@@ -277,6 +283,11 @@ svault stream decrypt -i db.svault -o restored_db.backup -p "stream-pass"
 # 42. Inspect streaming container metadata without decrypting
 svault stream inspect large_dataset.svault
 svault inspect large_dataset.svault --json
+
+# 43. Compare original carrier against stego-bearing carrier (PNG, BMP, WAV, or binary)
+svault compare cover.bmp stego.bmp
+svault compare cover.png stego.png --json
+svault diff original.wav stego.wav --detailed
 ```
 
 ### License & Attribution
@@ -309,7 +320,8 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
 10. **디렉터리 및 다중 파일 매니페스트 패킹 (`src/archive.rs`)** — 전체 디렉터리 트리를 상대 경로 정규화, 다중 계층 Zip Slip / 경로 순회(Path Traversal) 방어, 압축 폭탄(Zip Bomb) 방어, 파일별 SHA-256 암호학적 매니페스트, Unix/Windows 파일 권한 보존과 함께 단일 `SVLT` 컨테이너로 완전 밀봉(`svault pack-dir` / `svault unpack-dir`)합니다. `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi` 및 투명한 스테가노그래피(PNG/WAV/BMP) & ASCII 아머 캐리어 추출을 지원합니다.
 11. **키파일 + 비밀번호 이중 인증(2FA) 키 유도 (`src/keyfile.rs`)** — 외장 하드웨어 또는 USB 키파일(`--keyfile <경로>`)을 사용자 비밀번호와 결합하여 64 KiB 스트리밍 HMAC-SHA256 사전 해싱 후 Argon2id로 키를 유도합니다. 비밀번호 + 키파일 이중 인증(2FA) 및 키파일 단독 모드를 모두 지원하며, 내장 CSPRNG 키파일 생성(`svault keyfile generate`), SHA-256 지문 출력(`svault keyfile fingerprint`), 섀넌 엔트로피 감사(`svault keyfile inspect`), 제로화 메모리 소거 및 모든 미디어 스테가노그래피 캐리어·디렉터리 패킹과의 투명한 통합을 지원합니다.
 12. **청크 스트리밍 암호화 엔진 (`src/stream.rs`)** — 멀티 기가바이트(Multi-GB) 대용량 파일과 데이터 스트림을 $O(1)$ 고정 RAM 슬라이딩 윈도우로 안전하게 암호화 및 복호화합니다 (기본 4 MiB 청크, 64 KiB–64 MiB 범위). `SVST` v1 바이너리 헤더, 청크별 고유 논스 유도(`SHA256(b"shadow-vault:stream-chunk-nonce:v1" || base_nonce || chunk_index || tag)`), 청크별 AAD 위변조 방어, 시간 잠금/만료 정책 결합 및 Windows DPAPI 스트림 키 하드웨어 귀속을 지원합니다 (`svault stream encrypt`, `svault stream decrypt`, `svault stream inspect`, `--stream`, `--chunk-size`).
-13. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
+13. **스테가노그래피 캐리어 시각/통계 차이 분석기 (`src/diff.rs`)** — 원본 미디어 캐리어와 은닉 파일 간의 품질 왜곡 및 구조적 차이를 정밀하게 비교 분석합니다 (`svault compare <원본> <은닉>`, 별칭 `diff`). 이미지 채널별 평균 제곱 오차(MSE), 최대 신호 대 잡음비(PSNR, dB), 평균 절대 오차(MAE), LSB/Non-LSB 비트 플립 분포, WAV 16비트 PCM 샘플 왜곡 및 SNR(dB), PNG/WAV 청크 테이블 차이, 섀넌 엔트로피 변화량($\Delta H$), 256빈 바이트 전변동 거리(TVD) 및 구조화 JSON 출력을 지원합니다.
+14. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
 ### 주요 기능
 

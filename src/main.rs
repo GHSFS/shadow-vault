@@ -10,6 +10,7 @@ mod cli;
 mod clipboard_guard;
 mod crypto;
 mod decoy;
+mod diff;
 mod error;
 mod keyfile;
 mod policy;
@@ -1645,6 +1646,14 @@ fn main() -> Result<()> {
         }
         Commands::Stream { action } => {
             handle_stream_command(action)?;
+        }
+        Commands::Compare {
+            original,
+            stego,
+            json,
+            detailed,
+        } => {
+            diff::handle_compare_command(&original, &stego, json, detailed)?;
         }
     }
 

@@ -22,6 +22,7 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [x] **Stego Carrier Visual & Statistical Diff Report (`src/diff.rs`)** — Compare original vs. stego carriers across image PSNR/MSE metrics, 16-bit PCM WAV audio sample errors and SNR (dB), PNG/WAV structural chunk tables, Shannon entropy shifts, and 256-bin byte frequency histogram TVD with structured JSON output (`svault compare`).
 - [x] **Dead-Man's Switch & Max-Attempt Self-Shred Guard (`src/guard.rs`)** — Tamper-resistant attempt ledger (`.guard` companion or centralized stealth ledger), configurable failed attempt thresholds (`--max-attempts`), dead-man switch inactivity timers (`--dead-man`), check-in extensions (`svault guard checkin`), emergency destruction (`svault guard trigger`), and automatic 3-pass cryptographic self-shredding via `shred_file`.
 - [x] **Deterministic & CSPRNG Passphrase Generator (`src/passgen/`)** — BIP-39 2,048-word Diceware recovery generator, character/symbol generator with visual ambiguity elimination (`--exclude-ambiguous`), raw CSPRNG byte tokens in Hex, Base64, and Base32 (`--bytes`), numeric PIN generation, master seed deterministic derivation (`--seed`, `--context`), multi-candidate generation, keyspace and empirical Shannon entropy evaluation with 5-tier resilience ratings, and auto-expiring clipboard guard integration (`svault keygen`).
+- [x] **Unified Structured JSON Output Mode (`--json`) Across All Subcommands** — Machine-readable, structured JSON output across all subcommands (`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, and `keygen`) for programmatic scripting, pipeline chaining, and automated security audits, verified via dedicated domain integration tests (`tests/json_test.rs`).
 
 ---
 
@@ -45,6 +46,7 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [ ] **Air-Gapped Acoustic FSK/OFDM Modulation (`src/acoustic.rs`)** — Encode and decode containers as audio waveforms for offline acoustic transmission (`svault tx-audio` / `svault rx-audio`).
 - [ ] **Covert HTTP/2 & DNS-over-HTTPS Framing (`src/network_stego.rs`, `src/doh_stego.rs`)** — Frame encrypted payloads inside synthetic HTTP headers or RFC 8484 DoH envelopes for forensic transport testing.
 - [ ] **Fountain Code / Rateless Erasure Streaming (`src/fountain.rs`)** — Rateless Luby Transform droplet encoding over paste or optical streams (`svault fountain-encode` / `svault fountain-decode`).
+- [ ] **Obfuscated DNS TXT & CAA Record Covert Channel (`src/obfuscated_dns.rs`)** — Fragment and reconstruct encrypted `SVLT` containers across synthetic DNS TXT and CAA records with Base32 Crockford framing and SHA-256 chunk validation (`svault dns-pack` / `svault dns-unpack`).
 
 ### Modern & Post-Quantum Cryptography
 - [ ] **age-Compatible X25519 Public-Key Sealing (`src/age_box.rs`)** — Seal containers for recipient `age1...` Bech32 keys or `ssh-ed25519` public keys without shared passphrases (`svault seal -r <pubkey>`).
@@ -59,8 +61,7 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 ### Hardware Security & OS Hardening
 - [ ] **Covert ICMP Echo Payload Encapsulation (`src/icmp_stego.rs`)** — Conceal encrypted `SVLT` payloads inside RFC 792 ICMP Echo Request / Reply optional payload data bytes for forensic air-gapped transport (`svault icmp-pack` / `svault icmp-unpack`).
 - [ ] **Plausible Deniability Three-Tier Tri-Password Vault (`src/tri_vault.rs`)** — Three-tier polymorphic container supporting decoy, plausible confidential, and hyper-sensitive hidden partitions with zero structural markers (`svault encrypt-tri` / `svault decrypt-tri`).
-- [ ] **CSPRNG Passphrase & Diceware Generator (`src/passgen.rs`)** — High-entropy passphrase and recovery phrase generation (`svault keygen`).
-- [ ] **Structured JSON Output Mode (`--json`)** — Machine-readable JSON output across `inspect`, `audit`, `compare`, and `keygen` for CLI pipelines.
+- [ ] **Hardware True Random Number Generator Quality Attestation (`src/hardware_rng.rs`)** — Audit NIST SP 800-22 and Dieharder statistical randomness properties across hardware entropy sources (Intel RDRAND/RDSEED, Windows CryptGenRandom, and TPM RNG tokens) with live entropy rate calculation (`svault rng-audit`).
 - [ ] **FIDO2 / Windows Hello Biometric Binding (`src/hardware_token.rs`, `src/biometric.rs`)** — Bind vault keys to hardware authenticators and Windows Hello via Win32 `NCrypt` / WebAuthn APIs.
 - [ ] **TPM 2.0 PCR Sealing & Attestation (`src/tpm.rs`)** — Seal keys to Windows TPM 2.0 Platform Configuration Registers (`--tpm-pcr`).
 - [ ] **PKCS#11 & YubiKey PIV Smartcard Unlocking (`src/pkcs11.rs`, `src/piv.rs`)** — Hardware token key wrapping via PKCS#11 and PIV slot 9D/9E challenge-response.

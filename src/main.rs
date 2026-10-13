@@ -160,6 +160,7 @@ fn execute_standard_decrypt(
     clip: bool,
     clip_ttl: u64,
     at_time: Option<String>,
+    json: bool,
 ) -> Result<()> {
     let at_time_val = parse_cli_at_time(at_time.as_deref())?;
     check_guard_preflight(&input, at_time_val)?;
@@ -223,14 +224,38 @@ fn execute_standard_decrypt(
     if let Some(ref out_path) = output {
         fs::write(out_path, &plain)
             .with_context(|| format!("failed to write output: {}", out_path.display()))?;
-        println!(
-            "{} decrypted {} bytes -> {}",
-            "ok".green().bold(),
-            plain.len(),
-            out_path.display()
-        );
+        if json {
+            let out = serde_json::json!({
+                "status": "ok",
+                "command": "decrypt",
+                "input": input.display().to_string(),
+                "output": out_path.display().to_string(),
+                "plaintext_bytes": plain.len(),
+                "clipboard_guarded": clip,
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        } else {
+            println!(
+                "{} decrypted {} bytes -> {}",
+                "ok".green().bold(),
+                plain.len(),
+                out_path.display()
+            );
+        }
+    } else if json {
+        let is_utf8 = std::str::from_utf8(&plain).is_ok();
+        let out = serde_json::json!({
+            "status": "ok",
+            "command": "decrypt",
+            "input": input.display().to_string(),
+            "output": null,
+            "plaintext_bytes": plain.len(),
+            "utf8_text": if is_utf8 { std::str::from_utf8(&plain).ok() } else { None },
+            "clipboard_guarded": clip,
+        });
+        println!("{}", serde_json::to_string_pretty(&out)?);
     } else if !clip {
-        anyhow::bail!("either --output or --clip must be provided");
+        anyhow::bail!("either --output, --clip, or --json must be provided");
     }
     if clip {
         match std::str::from_utf8(&plain) {
@@ -275,6 +300,7 @@ fn main() -> Result<()> {
             max_attempts,
             dead_man,
             guard_companion,
+            json,
         } => {
             let policy = parse_cli_policy(
                 not_before.as_deref(),
@@ -301,23 +327,38 @@ fn main() -> Result<()> {
                     policy.as_ref(),
                     parsed_chunk_size,
                 )?;
-                let policy_msg = match policy {
-                    Some(ref p) => format!(
-                        " policy={}",
-                        p.status_summary(policy::current_utc_timestamp())
-                    ),
-                    None => String::new(),
-                };
-                println!(
-                    "{} encrypted {} bytes in {} chunks -> {} (chunk_size: {} bytes, dpapi={}{})",
-                    "ok".green().bold(),
-                    summary.total_plaintext_bytes,
-                    summary.total_chunks,
-                    output.display(),
-                    summary.chunk_size,
-                    dpapi,
-                    policy_msg
-                );
+                if json {
+                    let out = serde_json::json!({
+                        "status": "ok",
+                        "command": "encrypt",
+                        "input": input.display().to_string(),
+                        "output": output.display().to_string(),
+                        "plaintext_bytes": summary.total_plaintext_bytes,
+                        "chunks": summary.total_chunks,
+                        "chunk_size": summary.chunk_size,
+                        "dpapi_bound": dpapi,
+                        "stream": true,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    let policy_msg = match policy {
+                        Some(ref p) => format!(
+                            " policy={}",
+                            p.status_summary(policy::current_utc_timestamp())
+                        ),
+                        None => String::new(),
+                    };
+                    println!(
+                        "{} encrypted {} bytes in {} chunks -> {} (chunk_size: {} bytes, dpapi={}{})",
+                        "ok".green().bold(),
+                        summary.total_plaintext_bytes,
+                        summary.total_chunks,
+                        output.display(),
+                        summary.chunk_size,
+                        dpapi,
+                        policy_msg
+                    );
+                }
                 return Ok(());
             }
             let raw = fs::read(&input)
@@ -357,22 +398,7 @@ fn main() -> Result<()> {
             };
             fs::write(&output, &sealed)
                 .with_context(|| format!("failed to write container: {}", output.display()))?;
-            let policy_msg = match policy {
-                Some(ref p) => format!(
-                    " policy={}",
-                    p.status_summary(policy::current_utc_timestamp())
-                ),
-                None => String::new(),
-            };
-            println!(
-                "{} encrypted {} bytes -> {} (dpapi={}{})",
-                "ok".green().bold(),
-                raw.len(),
-                output.display(),
-                dpapi,
-                policy_msg
-            );
-            if max_attempts.is_some() || dead_man.is_some() {
+            let guard_info = if max_attempts.is_some() || dead_man.is_some() {
                 let k = max_attempts.unwrap_or(3);
                 let dead_man_seconds = match dead_man {
                     Some(ref dm) => Some(policy::parse_duration(dm)?),
@@ -387,17 +413,53 @@ fn main() -> Result<()> {
                     guard_companion,
                     None,
                 )?;
-                let dm_str = g
-                    .dead_man_interval_seconds
-                    .map(|s| format!(" (dead-man: {s}s)"))
-                    .unwrap_or_default();
+                if !json {
+                    let dm_str = g
+                        .dead_man_interval_seconds
+                        .map(|s| format!(" (dead-man: {s}s)"))
+                        .unwrap_or_default();
+                    println!(
+                        "{} armed guard for {} (max_attempts={}{}, companion={})",
+                        "ok".green().bold(),
+                        output.display(),
+                        g.max_attempts,
+                        dm_str,
+                        g.companion
+                    );
+                }
+                Some(g)
+            } else {
+                None
+            };
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "encrypt",
+                    "input": input.display().to_string(),
+                    "output": output.display().to_string(),
+                    "plaintext_bytes": raw.len(),
+                    "ciphertext_bytes": sealed.len(),
+                    "dpapi_bound": dpapi,
+                    "version": sealed.get(4).copied().unwrap_or(1),
+                    "stream": false,
+                    "guard_armed": guard_info.is_some(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                let policy_msg = match policy {
+                    Some(ref p) => format!(
+                        " policy={}",
+                        p.status_summary(policy::current_utc_timestamp())
+                    ),
+                    None => String::new(),
+                };
                 println!(
-                    "{} armed guard for {} (max_attempts={}{}, companion={})",
+                    "{} encrypted {} bytes -> {} (dpapi={}{})",
                     "ok".green().bold(),
+                    raw.len(),
                     output.display(),
-                    g.max_attempts,
-                    dm_str,
-                    g.companion
+                    dpapi,
+                    policy_msg
                 );
             }
         }
@@ -410,6 +472,7 @@ fn main() -> Result<()> {
             decoy_passphrase,
             padding,
             dpapi,
+            json,
         } => {
             let raw_primary = fs::read(&primary)
                 .with_context(|| format!("failed to read primary file: {}", primary.display()))?;
@@ -426,14 +489,29 @@ fn main() -> Result<()> {
             )?;
             fs::write(&output, &sealed)
                 .with_context(|| format!("failed to write container: {}", output.display()))?;
-            println!(
-                "{} encrypted dual-slot container (primary: {} bytes, decoy: {} bytes) -> {} (dpapi={})",
-                "ok".green().bold(),
-                raw_primary.len(),
-                raw_decoy.len(),
-                output.display(),
-                dpapi
-            );
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "encrypt-decoy",
+                    "primary": primary.display().to_string(),
+                    "decoy": decoy.display().to_string(),
+                    "output": output.display().to_string(),
+                    "primary_bytes": raw_primary.len(),
+                    "decoy_bytes": raw_decoy.len(),
+                    "ciphertext_bytes": sealed.len(),
+                    "dpapi_bound": dpapi,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} encrypted dual-slot container (primary: {} bytes, decoy: {} bytes) -> {} (dpapi={})",
+                    "ok".green().bold(),
+                    raw_primary.len(),
+                    raw_decoy.len(),
+                    output.display(),
+                    dpapi
+                );
+            }
         }
         Commands::Decrypt {
             input,
@@ -445,6 +523,7 @@ fn main() -> Result<()> {
             clip_ttl,
             at_time,
             stream,
+            json,
         } => {
             let is_stream = stream || {
                 if let Ok(mut f) = fs::File::open(&input) {
@@ -477,13 +556,26 @@ fn main() -> Result<()> {
                         return Err(e.into());
                     }
                 };
-                println!(
-                    "{} decrypted {} bytes in {} chunks -> {}",
-                    "ok".green().bold(),
-                    summary.total_plaintext_bytes,
-                    summary.total_chunks,
-                    out_path.display()
-                );
+                if json {
+                    let out = serde_json::json!({
+                        "status": "ok",
+                        "command": "decrypt",
+                        "input": input.display().to_string(),
+                        "output": out_path.display().to_string(),
+                        "plaintext_bytes": summary.total_plaintext_bytes,
+                        "chunks": summary.total_chunks,
+                        "stream": true,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!(
+                        "{} decrypted {} bytes in {} chunks -> {}",
+                        "ok".green().bold(),
+                        summary.total_plaintext_bytes,
+                        summary.total_chunks,
+                        out_path.display()
+                    );
+                }
                 return Ok(());
             }
 
@@ -496,6 +588,7 @@ fn main() -> Result<()> {
                 clip,
                 clip_ttl,
                 at_time,
+                json,
             )?;
         }
         Commands::DecryptDecoy {
@@ -507,6 +600,7 @@ fn main() -> Result<()> {
             clip,
             clip_ttl,
             at_time,
+            json,
         } => {
             execute_standard_decrypt(
                 input,
@@ -517,6 +611,7 @@ fn main() -> Result<()> {
                 clip,
                 clip_ttl,
                 at_time,
+                json,
             )?;
         }
 
@@ -534,6 +629,7 @@ fn main() -> Result<()> {
             expires_at,
             expires_in,
             policy_desc,
+            json,
         } => {
             let png = fs::read(&carrier)
                 .with_context(|| format!("failed to read carrier PNG: {}", carrier.display()))?;
@@ -581,12 +677,26 @@ fn main() -> Result<()> {
             let stego_png = stego::embed_in_png(&png, &sealed)?;
             fs::write(&output, &stego_png)
                 .with_context(|| format!("failed to write stego PNG: {}", output.display()))?;
-            println!(
-                "{} embedded {} bytes into {}",
-                "ok".green().bold(),
-                raw_secret.len(),
-                output.display()
-            );
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "embed",
+                    "carrier": carrier.display().to_string(),
+                    "secret": secret.display().to_string(),
+                    "output": output.display().to_string(),
+                    "secret_bytes": raw_secret.len(),
+                    "stego_bytes": stego_png.len(),
+                    "carrier_type": "png",
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} embedded {} bytes into {}",
+                    "ok".green().bold(),
+                    raw_secret.len(),
+                    output.display()
+                );
+            }
         }
         Commands::Extract {
             carrier,
@@ -597,6 +707,7 @@ fn main() -> Result<()> {
             clip,
             clip_ttl,
             at_time,
+            json,
         } => {
             let png = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego PNG: {}", carrier.display()))?;
@@ -656,14 +767,40 @@ fn main() -> Result<()> {
                 fs::write(out_path, &plain).with_context(|| {
                     format!("failed to write extracted file: {}", out_path.display())
                 })?;
-                println!(
-                    "{} extracted {} bytes -> {}",
-                    "ok".green().bold(),
-                    plain.len(),
-                    out_path.display()
-                );
+                if json {
+                    let out = serde_json::json!({
+                        "status": "ok",
+                        "command": "extract",
+                        "carrier": carrier.display().to_string(),
+                        "output": out_path.display().to_string(),
+                        "extracted_bytes": plain.len(),
+                        "carrier_type": "png",
+                        "clipboard_guarded": clip,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!(
+                        "{} extracted {} bytes -> {}",
+                        "ok".green().bold(),
+                        plain.len(),
+                        out_path.display()
+                    );
+                }
+            } else if json {
+                let is_utf8 = std::str::from_utf8(&plain).is_ok();
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "extract",
+                    "carrier": carrier.display().to_string(),
+                    "output": null,
+                    "extracted_bytes": plain.len(),
+                    "utf8_text": if is_utf8 { std::str::from_utf8(&plain).ok() } else { None },
+                    "carrier_type": "png",
+                    "clipboard_guarded": clip,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
             } else if !clip {
-                anyhow::bail!("either --output or --clip must be provided");
+                anyhow::bail!("either --output, --clip, or --json must be provided");
             }
             if clip {
                 match std::str::from_utf8(&plain) {
@@ -704,6 +841,7 @@ fn main() -> Result<()> {
             expires_at,
             expires_in,
             policy_desc,
+            json,
         } => {
             let wav_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read carrier WAV: {}", carrier.display()))?;
@@ -752,13 +890,28 @@ fn main() -> Result<()> {
             let stego_wav = wav::embed_in_wav(&wav_bytes, &sealed, effective_mode)?;
             fs::write(&output, &stego_wav)
                 .with_context(|| format!("failed to write stego WAV: {}", output.display()))?;
-            println!(
-                "{} embedded {} bytes into {} (mode: {})",
-                "ok".green().bold(),
-                raw_secret.len(),
-                output.display(),
-                effective_mode
-            );
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "embed-wav",
+                    "carrier": carrier.display().to_string(),
+                    "secret": secret.display().to_string(),
+                    "output": output.display().to_string(),
+                    "secret_bytes": raw_secret.len(),
+                    "stego_bytes": stego_wav.len(),
+                    "carrier_type": "wav",
+                    "mode": effective_mode.to_string(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} embedded {} bytes into {} (mode: {})",
+                    "ok".green().bold(),
+                    raw_secret.len(),
+                    output.display(),
+                    effective_mode
+                );
+            }
         }
         Commands::ExtractWav {
             carrier,
@@ -771,6 +924,7 @@ fn main() -> Result<()> {
             clip,
             clip_ttl,
             at_time,
+            json,
         } => {
             let wav_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego WAV: {}", carrier.display()))?;
@@ -831,14 +985,42 @@ fn main() -> Result<()> {
                 fs::write(out_path, &plain).with_context(|| {
                     format!("failed to write extracted file: {}", out_path.display())
                 })?;
-                println!(
-                    "{} extracted {} bytes -> {}",
-                    "ok".green().bold(),
-                    plain.len(),
-                    out_path.display()
-                );
+                if json {
+                    let out = serde_json::json!({
+                        "status": "ok",
+                        "command": "extract-wav",
+                        "carrier": carrier.display().to_string(),
+                        "output": out_path.display().to_string(),
+                        "extracted_bytes": plain.len(),
+                        "carrier_type": "wav",
+                        "mode": (if lsb { wav::ExtractWavMode::Lsb } else { mode }).to_string(),
+                        "clipboard_guarded": clip,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!(
+                        "{} extracted {} bytes -> {}",
+                        "ok".green().bold(),
+                        plain.len(),
+                        out_path.display()
+                    );
+                }
+            } else if json {
+                let is_utf8 = std::str::from_utf8(&plain).is_ok();
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "extract-wav",
+                    "carrier": carrier.display().to_string(),
+                    "output": null,
+                    "extracted_bytes": plain.len(),
+                    "utf8_text": if is_utf8 { std::str::from_utf8(&plain).ok() } else { None },
+                    "carrier_type": "wav",
+                    "mode": (if lsb { wav::ExtractWavMode::Lsb } else { mode }).to_string(),
+                    "clipboard_guarded": clip,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
             } else if !clip {
-                anyhow::bail!("either --output or --clip must be provided");
+                anyhow::bail!("either --output, --clip, or --json must be provided");
             }
             if clip {
                 match std::str::from_utf8(&plain) {
@@ -877,6 +1059,7 @@ fn main() -> Result<()> {
             expires_at,
             expires_in,
             policy_desc,
+            json,
         } => {
             let bmp_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read carrier BMP: {}", carrier.display()))?;
@@ -924,12 +1107,26 @@ fn main() -> Result<()> {
             let stego_bmp = bmp::embed_in_bmp(&bmp_bytes, &sealed)?;
             fs::write(&output, &stego_bmp)
                 .with_context(|| format!("failed to write stego BMP: {}", output.display()))?;
-            println!(
-                "{} embedded {} bytes into {}",
-                "ok".green().bold(),
-                raw_secret.len(),
-                output.display()
-            );
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "embed-bmp",
+                    "carrier": carrier.display().to_string(),
+                    "secret": secret.display().to_string(),
+                    "output": output.display().to_string(),
+                    "secret_bytes": raw_secret.len(),
+                    "stego_bytes": stego_bmp.len(),
+                    "carrier_type": "bmp",
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} embedded {} bytes into {}",
+                    "ok".green().bold(),
+                    raw_secret.len(),
+                    output.display()
+                );
+            }
         }
         Commands::ExtractBmp {
             carrier,
@@ -940,6 +1137,7 @@ fn main() -> Result<()> {
             clip,
             clip_ttl,
             at_time,
+            json,
         } => {
             let bmp_bytes = fs::read(&carrier)
                 .with_context(|| format!("failed to read stego BMP: {}", carrier.display()))?;
@@ -999,14 +1197,40 @@ fn main() -> Result<()> {
                 fs::write(out_path, &plain).with_context(|| {
                     format!("failed to write extracted file: {}", out_path.display())
                 })?;
-                println!(
-                    "{} extracted {} bytes -> {}",
-                    "ok".green().bold(),
-                    plain.len(),
-                    out_path.display()
-                );
+                if json {
+                    let out = serde_json::json!({
+                        "status": "ok",
+                        "command": "extract-bmp",
+                        "carrier": carrier.display().to_string(),
+                        "output": out_path.display().to_string(),
+                        "extracted_bytes": plain.len(),
+                        "carrier_type": "bmp",
+                        "clipboard_guarded": clip,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!(
+                        "{} extracted {} bytes -> {}",
+                        "ok".green().bold(),
+                        plain.len(),
+                        out_path.display()
+                    );
+                }
+            } else if json {
+                let is_utf8 = std::str::from_utf8(&plain).is_ok();
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "extract-bmp",
+                    "carrier": carrier.display().to_string(),
+                    "output": null,
+                    "extracted_bytes": plain.len(),
+                    "utf8_text": if is_utf8 { std::str::from_utf8(&plain).ok() } else { None },
+                    "carrier_type": "bmp",
+                    "clipboard_guarded": clip,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
             } else if !clip {
-                anyhow::bail!("either --output or --clip must be provided");
+                anyhow::bail!("either --output, --clip, or --json must be provided");
             }
             if clip {
                 match std::str::from_utf8(&plain) {
@@ -1165,6 +1389,7 @@ fn main() -> Result<()> {
                     if json {
                         let mut out = serde_json::json!({
                             "target_file": input.display().to_string(),
+                            "carrier_type": "stream",
                             "container_type": "stream",
                             "container_version": info.version,
                             "dpapi_bound": info.dpapi_bound,
@@ -1233,22 +1458,23 @@ fn main() -> Result<()> {
 
             let raw = fs::read(&input)
                 .with_context(|| format!("failed to read file: {}", input.display()))?;
-            let (container, armor_meta) = if armor::is_armored(&raw) {
+            let (carrier_type, container, armor_meta) = if armor::is_armored(&raw) {
                 let text = std::str::from_utf8(&raw).context("armored file is not valid UTF-8")?;
                 let meta = armor::inspect_armor(text)?;
                 let dearmored = armor::dearmor_data(text)?;
-                (dearmored.to_vec(), Some(meta))
+                ("armor", dearmored.to_vec(), Some(meta))
             } else if raw.starts_with(b"\x89PNG\r\n\x1a\n") {
-                (stego::extract_from_png(&raw)?, None)
+                ("png", stego::extract_from_png(&raw)?, None)
             } else if raw.len() >= 12 && &raw[0..4] == b"RIFF" && &raw[8..12] == b"WAVE" {
                 (
+                    "wav",
                     wav::extract_from_wav(&raw, wav::ExtractWavMode::Auto)?,
                     None,
                 )
             } else if raw.starts_with(b"BM") {
-                (bmp::extract_from_bmp(&raw)?, None)
+                ("bmp", bmp::extract_from_bmp(&raw)?, None)
             } else {
-                (raw, None)
+                ("vault", raw, None)
             };
 
             if json {
@@ -1259,6 +1485,7 @@ fn main() -> Result<()> {
                 };
                 let mut out = serde_json::json!({
                     "target_file": input.display().to_string(),
+                    "carrier_type": carrier_type,
                 });
                 if let Some(ref meta) = armor_meta {
                     let intact = meta.stripes.iter().filter(|s| s.valid).count();
@@ -1350,15 +1577,30 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Shred { input, passes } => {
+        Commands::Shred {
+            input,
+            passes,
+            json,
+        } => {
             let wiped = shred::shred_file(&input, passes)?;
-            println!(
-                "{} shredded {} ({} bytes, {} passes)",
-                "ok".green().bold(),
-                input.display(),
-                wiped,
-                passes
-            );
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "shred",
+                    "target": input.display().to_string(),
+                    "passes": passes,
+                    "shredded_bytes": wiped,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} shredded {} ({} bytes, {} passes)",
+                    "ok".green().bold(),
+                    input.display(),
+                    wiped,
+                    passes
+                );
+            }
         }
         Commands::Split {
             input,
@@ -1507,6 +1749,7 @@ fn main() -> Result<()> {
             parity_stripes,
             clip,
             clip_ttl,
+            json,
         } => {
             let raw = fs::read(&input)
                 .with_context(|| format!("failed to read input file: {}", input.display()))?;
@@ -1516,6 +1759,21 @@ fn main() -> Result<()> {
                 fs::write(out_path, &armored).with_context(|| {
                     format!("failed to write armored file: {}", out_path.display())
                 })?;
+            }
+
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "armor",
+                    "input": input.display().to_string(),
+                    "output": output.as_ref().map(|p| p.display().to_string()),
+                    "original_bytes": raw.len(),
+                    "armored_bytes": armored.len(),
+                    "data_stripes": data_stripes,
+                    "parity_stripes": parity_stripes,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if let Some(ref out_path) = output {
                 println!(
                     "{} armored {} bytes -> {} (stripes: {}+{})",
                     "ok".green().bold(),
@@ -1541,6 +1799,7 @@ fn main() -> Result<()> {
             output,
             clip,
             clip_ttl,
+            json,
         } => {
             let raw_text = fs::read_to_string(&input)
                 .with_context(|| format!("failed to read armored file: {}", input.display()))?;
@@ -1550,12 +1809,32 @@ fn main() -> Result<()> {
                 fs::write(out_path, &*plain).with_context(|| {
                     format!("failed to write dearmored file: {}", out_path.display())
                 })?;
-                println!(
-                    "{} dearmored {} bytes -> {}",
-                    "ok".green().bold(),
-                    plain.len(),
-                    out_path.display()
-                );
+                if json {
+                    let out = serde_json::json!({
+                        "status": "ok",
+                        "command": "dearmor",
+                        "input": input.display().to_string(),
+                        "output": out_path.display().to_string(),
+                        "recovered_bytes": plain.len(),
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!(
+                        "{} dearmored {} bytes -> {}",
+                        "ok".green().bold(),
+                        plain.len(),
+                        out_path.display()
+                    );
+                }
+            } else if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "dearmor",
+                    "input": input.display().to_string(),
+                    "output": serde_json::Value::Null,
+                    "recovered_bytes": plain.len(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
             } else if !clip {
                 anyhow::bail!("either --output or --clip must be provided");
             }
@@ -1910,6 +2189,7 @@ fn handle_totp_command(action: TotpAction) -> Result<()> {
             vault,
             mut passphrase,
             dpapi,
+            json,
         } => {
             let record = if let Some(ref uri_str) = uri {
                 let parsed = totp::OtpAuthUri::parse(uri_str)?;
@@ -1947,16 +2227,30 @@ fn handle_totp_command(action: TotpAction) -> Result<()> {
             vault_inst.save(&vault, &passphrase, bind_dpapi)?;
             passphrase.zeroize();
 
-            println!(
-                "{} added TOTP 2FA record '{}' to {} (algo={}, digits={}, period={}s, dpapi={})",
-                "ok".green().bold(),
-                record_name,
-                vault.display(),
-                record_algo,
-                record_digits,
-                record_period,
-                bind_dpapi
-            );
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "totp add",
+                    "name": record_name,
+                    "vault": vault.display().to_string(),
+                    "algorithm": record_algo.to_string(),
+                    "digits": record_digits,
+                    "period": record_period,
+                    "dpapi": bind_dpapi,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} added TOTP 2FA record '{}' to {} (algo={}, digits={}, period={}s, dpapi={})",
+                    "ok".green().bold(),
+                    record_name,
+                    vault.display(),
+                    record_algo,
+                    record_digits,
+                    record_period,
+                    bind_dpapi
+                );
+            }
         }
 
         TotpAction::Code {
@@ -2079,6 +2373,7 @@ fn handle_totp_command(action: TotpAction) -> Result<()> {
             vault,
             mut passphrase,
             dpapi,
+            json,
         } => {
             let mut vault_inst = totp::TotpVault::load(&vault, &passphrase)?;
             let removed = vault_inst.remove_record(&name)?;
@@ -2086,12 +2381,22 @@ fn handle_totp_command(action: TotpAction) -> Result<()> {
             vault_inst.save(&vault, &passphrase, bind_dpapi)?;
             passphrase.zeroize();
 
-            println!(
-                "{} removed TOTP record '{}' from {}",
-                "ok".green().bold(),
-                removed.name,
-                vault.display()
-            );
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "totp remove",
+                    "name": removed.name,
+                    "vault": vault.display().to_string(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} removed TOTP record '{}' from {}",
+                    "ok".green().bold(),
+                    removed.name,
+                    vault.display()
+                );
+            }
         }
 
         TotpAction::Verify {
@@ -2154,6 +2459,7 @@ fn handle_totp_command(action: TotpAction) -> Result<()> {
             vault,
             mut passphrase,
             dpapi,
+            json,
         } => {
             let mut vault_inst = totp::TotpVault::load_or_new(&vault, &passphrase)?;
             let mut imported = 0usize;
@@ -2205,12 +2511,23 @@ fn handle_totp_command(action: TotpAction) -> Result<()> {
             vault_inst.save(&vault, &passphrase, bind_dpapi)?;
             passphrase.zeroize();
 
-            println!(
-                "{} imported {} record(s) into {}",
-                "ok".green().bold(),
-                imported,
-                vault.display()
-            );
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "totp import",
+                    "imported_count": imported,
+                    "vault": vault.display().to_string(),
+                    "dpapi": bind_dpapi,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} imported {} record(s) into {}",
+                    "ok".green().bold(),
+                    imported,
+                    vault.display()
+                );
+            }
         }
 
         TotpAction::Export {
@@ -2263,8 +2580,28 @@ fn handle_totp_command(action: TotpAction) -> Result<()> {
 
 fn handle_clip_command(action: ClipAction) -> Result<()> {
     match action {
-        ClipAction::Copy { text, ttl, quiet } => {
-            if quiet {
+        ClipAction::Copy {
+            text,
+            ttl,
+            quiet,
+            json,
+        } => {
+            if json {
+                let guarded = clipboard_guard::copy_to_clipboard(&text)?;
+                if ttl > 0 {
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(ttl));
+                        let _ = guarded.scrub();
+                    });
+                }
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "clip copy",
+                    "bytes": text.len(),
+                    "ttl": ttl,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if quiet {
                 let guarded = clipboard_guard::copy_to_clipboard(&text)?;
                 if ttl > 0 {
                     std::thread::spawn(move || {
@@ -2291,9 +2628,17 @@ fn handle_clip_command(action: ClipAction) -> Result<()> {
                 }
             }
         }
-        ClipAction::Clear => {
+        ClipAction::Clear { json } => {
             clipboard_guard::clear_clipboard()?;
-            println!("{} clipboard cleared", "ok".green().bold());
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "clip clear",
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("{} clipboard cleared", "ok".green().bold());
+            }
         }
         ClipAction::Status { json } => {
             let content = clipboard_guard::get_clipboard_text()?;
@@ -2703,16 +3048,31 @@ fn handle_unpack_dir_command(
 
 fn handle_keyfile_command(action: KeyfileAction) -> Result<()> {
     match action {
-        KeyfileAction::Generate { output, bytes } => {
+        KeyfileAction::Generate {
+            output,
+            bytes,
+            json,
+        } => {
             keyfile::generate_keyfile(&output, bytes)?;
             let fp = keyfile::keyfile_fingerprint(&output)?;
-            println!(
-                "{} generated cryptographic keyfile -> {} ({} bytes, fingerprint: {})",
-                "ok".green().bold(),
-                output.display(),
-                bytes,
-                fp
-            );
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "keyfile generate",
+                    "path": output.display().to_string(),
+                    "bytes": bytes,
+                    "fingerprint": fp,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} generated cryptographic keyfile -> {} ({} bytes, fingerprint: {})",
+                    "ok".green().bold(),
+                    output.display(),
+                    bytes,
+                    fp
+                );
+            }
         }
         KeyfileAction::Inspect { path, json } => {
             let info = keyfile::inspect_keyfile(&path)?;
@@ -2722,9 +3082,17 @@ fn handle_keyfile_command(action: KeyfileAction) -> Result<()> {
                 println!("{}", info.display_summary());
             }
         }
-        KeyfileAction::Fingerprint { path } => {
+        KeyfileAction::Fingerprint { path, json } => {
             let fp = keyfile::keyfile_fingerprint(&path)?;
-            println!("{fp}");
+            if json {
+                let out = serde_json::json!({
+                    "path": path.display().to_string(),
+                    "fingerprint": fp,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("{fp}");
+            }
         }
     }
     Ok(())
@@ -2932,6 +3300,7 @@ fn handle_guard_command(action: GuardAction) -> Result<()> {
             deadline,
             passes,
             companion,
+            json,
         } => {
             let dead_man_seconds = match dead_man {
                 Some(ref s) => Some(policy::parse_duration(s)?),
@@ -2951,20 +3320,34 @@ fn handle_guard_command(action: GuardAction) -> Result<()> {
                 companion,
                 Some(now),
             )?;
-            println!(
-                "{} armed guard on {} (max_attempts={}, passes={}, companion={})",
-                "ok".green().bold(),
-                target.display(),
-                policy.max_attempts,
-                policy.shred_passes,
-                policy.companion
-            );
-            if let Some(dl) = policy.dead_man_deadline {
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "guard arm",
+                    "target": target.display().to_string(),
+                    "max_attempts": policy.max_attempts,
+                    "shred_passes": policy.shred_passes,
+                    "companion": policy.companion,
+                    "dead_man_deadline": policy.dead_man_deadline,
+                    "dead_man_deadline_iso": policy.dead_man_deadline.map(policy::format_iso8601_utc),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
                 println!(
-                    "  dead-man deadline:     {} ({})",
-                    dl,
-                    policy::format_iso8601_utc(dl)
+                    "{} armed guard on {} (max_attempts={}, passes={}, companion={})",
+                    "ok".green().bold(),
+                    target.display(),
+                    policy.max_attempts,
+                    policy.shred_passes,
+                    policy.companion
                 );
+                if let Some(dl) = policy.dead_man_deadline {
+                    println!(
+                        "  dead-man deadline:     {} ({})",
+                        dl,
+                        policy::format_iso8601_utc(dl)
+                    );
+                }
             }
         }
         GuardAction::Status {
@@ -3050,43 +3433,78 @@ fn handle_guard_command(action: GuardAction) -> Result<()> {
                 }
             }
         }
-        GuardAction::Reset { target } => {
+        GuardAction::Reset { target, json } => {
             let policy = guard::reset_guard(&target, None)?;
-            println!(
-                "{} reset failed attempts counter for {} (failed_attempts=0)",
-                "ok".green().bold(),
-                target.display()
-            );
-            if let Some(dl) = policy.dead_man_deadline {
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "guard reset",
+                    "target": target.display().to_string(),
+                    "failed_attempts": 0,
+                    "dead_man_deadline": policy.dead_man_deadline,
+                    "dead_man_deadline_iso": policy.dead_man_deadline.map(policy::format_iso8601_utc),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
                 println!(
-                    "  refreshed deadline:    {} ({})",
-                    dl,
-                    policy::format_iso8601_utc(dl)
+                    "{} reset failed attempts counter for {} (failed_attempts=0)",
+                    "ok".green().bold(),
+                    target.display()
                 );
+                if let Some(dl) = policy.dead_man_deadline {
+                    println!(
+                        "  refreshed deadline:    {} ({})",
+                        dl,
+                        policy::format_iso8601_utc(dl)
+                    );
+                }
             }
         }
-        GuardAction::Checkin { target, interval } => {
+        GuardAction::Checkin {
+            target,
+            interval,
+            json,
+        } => {
             let interval_secs = match interval {
                 Some(ref s) => Some(policy::parse_duration(s)?),
                 None => None,
             };
             let policy = guard::checkin_guard(&target, interval_secs, None)?;
-            println!(
-                "{} checked-in dead-man switch for {}",
-                "ok".green().bold(),
-                target.display()
-            );
-            if let Some(dl) = policy.dead_man_deadline {
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "guard checkin",
+                    "target": target.display().to_string(),
+                    "dead_man_deadline": policy.dead_man_deadline,
+                    "dead_man_deadline_iso": policy.dead_man_deadline.map(policy::format_iso8601_utc),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
                 println!(
-                    "  new deadline:          {} ({})",
-                    dl,
-                    policy::format_iso8601_utc(dl)
+                    "{} checked-in dead-man switch for {}",
+                    "ok".green().bold(),
+                    target.display()
                 );
+                if let Some(dl) = policy.dead_man_deadline {
+                    println!(
+                        "  new deadline:          {} ({})",
+                        dl,
+                        policy::format_iso8601_utc(dl)
+                    );
+                }
             }
         }
-        GuardAction::Disarm { target } => {
+        GuardAction::Disarm { target, json } => {
             let removed = guard::disarm_guard(&target)?;
-            if removed {
+            if json {
+                let out = serde_json::json!({
+                    "status": if removed { "ok" } else { "warning" },
+                    "command": "guard disarm",
+                    "target": target.display().to_string(),
+                    "disarmed": removed,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if removed {
                 println!(
                     "{} disarmed and removed guard protection from {}",
                     "ok".green().bold(),
@@ -3104,6 +3522,7 @@ fn handle_guard_command(action: GuardAction) -> Result<()> {
             target,
             passes,
             force,
+            json,
         } => {
             if !force {
                 anyhow::bail!(
@@ -3113,13 +3532,24 @@ fn handle_guard_command(action: GuardAction) -> Result<()> {
                 );
             }
             let shredded = guard::emergency_trigger(&target, passes)?;
-            println!(
-                "{} emergency triggered: shredded {} bytes ({} passes) -> {}",
-                "ok".red().bold(),
-                shredded,
-                passes,
-                target.display()
-            );
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "guard trigger",
+                    "target": target.display().to_string(),
+                    "passes": passes,
+                    "shredded_bytes": shredded,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} emergency triggered: shredded {} bytes ({} passes) -> {}",
+                    "ok".red().bold(),
+                    shredded,
+                    passes,
+                    target.display()
+                );
+            }
         }
         GuardAction::List { json, at_time } => {
             let at_time_val = parse_cli_at_time(at_time.as_deref())?;

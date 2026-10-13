@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 1113" width="820" height="1113">
+  <defs>
+    <filter id="windowShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Terminal Window Background -->
+  <rect x="0" y="0" width="820" height="1113" rx="10" ry="10" fill="#0d1117" filter="url(#windowShadow)"/>
+  <rect x="0" y="0" width="820" height="44" rx="10" ry="10" fill="#161b22"/>
+  <rect x="0" y="40" width="820" height="4" fill="#161b22"/>
+  <line x1="0" y1="44" x2="820" y2="44" stroke="#30363d" stroke-width="1"/>
+
+  <!-- Traffic Light Window Buttons -->
+  <circle cx="20" cy="22" r="6" fill="#ff5f56"/>
+  <circle cx="38" cy="22" r="6" fill="#ffbd2e"/>
+  <circle cx="56" cy="22" r="6" fill="#27c93f"/>
+
+  <!-- Title -->
+  <text x="410" y="27" fill="#8b949e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" text-anchor="middle">
+    shadow-vault — Windows Terminal
+  </text>
+
+  <!-- Terminal Content Body -->
+  <g>
+    <text x="20" y="77" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#7ee787" font-weight="bold">$ </tspan>
+      <tspan fill="#56d4dd" font-weight="bold">cargo run -- --help</tspan>
+    </text>
+    <text x="20" y="98" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">ShadowVault — steganography &amp; dual-layer hardware-bound encrypted vault</tspan>
+    </text>
+    <text x="20" y="119" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3"></tspan>
+    </text>
+    <text x="20" y="140" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">Usage: svault.exe &lt;COMMAND&gt;</tspan>
+    </text>
+    <text x="20" y="161" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3"></tspan>
+    </text>
+    <text x="20" y="182" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">Commands:</tspan>
+    </text>
+    <text x="20" y="203" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  encrypt        Encrypt a file into a .svault container (Argon2id + ChaCha20-Poly1305 + optional</tspan>
+    </text>
+    <text x="20" y="224" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 DPAPI) [alias: enc]</tspan>
+    </text>
+    <text x="20" y="245" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  encrypt-decoy  Encrypt a dual-password container with primary hidden secret and plausible decoy</tspan>
+    </text>
+    <text x="20" y="266" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 [alias: enc-decoy]</tspan>
+    </text>
+    <text x="20" y="287" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  decrypt        Decrypt a .svault container back to its original file [alias: dec]</tspan>
+    </text>
+    <text x="20" y="308" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  decrypt-decoy  Decrypt a plausible deniability container (seamless or explicit decoy passphrase)</tspan>
+    </text>
+    <text x="20" y="329" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 [alias: dec-decoy]</tspan>
+    </text>
+    <text x="20" y="350" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  embed          Encrypt and hide a secret file inside a PNG carrier image [alias: hide]</tspan>
+    </text>
+    <text x="20" y="371" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  extract        Extract and decrypt a secret file from a stego PNG image [alias: unhide]</tspan>
+    </text>
+    <text x="20" y="392" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  embed-wav      Encrypt and hide a secret file inside a WAV audio carrier [alias: hide-wav]</tspan>
+    </text>
+    <text x="20" y="413" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  extract-wav    Extract and decrypt a secret file from a stego WAV audio file [alias: unhide-wav]</tspan>
+    </text>
+    <text x="20" y="434" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  embed-bmp      Encrypt and hide a secret file inside a 24-bit uncompressed BMP carrier image</tspan>
+    </text>
+    <text x="20" y="455" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 [alias: hide-bmp]</tspan>
+    </text>
+    <text x="20" y="476" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  extract-bmp    Extract and decrypt a secret file from a stego BMP image [alias: unhide-bmp]</tspan>
+    </text>
+    <text x="20" y="497" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  capacity       Estimate and display steganographic data storage capacity for a carrier file</tspan>
+    </text>
+    <text x="20" y="518" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 [alias: cap]</tspan>
+    </text>
+    <text x="20" y="539" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  inspect        Inspect a .svault container or stego carrier header without decrypting</tspan>
+    </text>
+    <text x="20" y="560" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  shred          Securely overwrite and destroy a sensitive file (3-pass shred)</tspan>
+    </text>
+    <text x="20" y="581" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  split          Split a secret or master recovery key into M-of-N Shamir shares (GF(256)) [alias:</tspan>
+    </text>
+    <text x="20" y="602" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 share]</tspan>
+    </text>
+    <text x="20" y="623" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  combine        Combine M-of-N Shamir shares to reconstruct the original secret [aliases: recover,</tspan>
+    </text>
+    <text x="20" y="644" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 reconstruct]</tspan>
+    </text>
+    <text x="20" y="665" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  armor          Armor a .svault container or secret file with Cauchy MDS Reed-Solomon parity</tspan>
+    </text>
+    <text x="20" y="686" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 stripes (.svault.asc) [alias: asc]</tspan>
+    </text>
+    <text x="20" y="707" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  dearmor        Decode an ASCII armored file (.svault.asc) back to the original container or secret</tspan>
+    </text>
+    <text x="20" y="728" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 file [aliases: de-armor, unarmor]</tspan>
+    </text>
+    <text x="20" y="749" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  repair         Inspect and repair a corrupted .svault.asc armored file using Cauchy Reed-Solomon</tspan>
+    </text>
+    <text x="20" y="770" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 parity [alias: fix]</tspan>
+    </text>
+    <text x="20" y="791" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  audit          Audit passphrase strength, Shannon entropy, and steganography carrier anomalies</tspan>
+    </text>
+    <text x="20" y="812" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  totp           Manage encrypted RFC 6238 TOTP 2FA vault (.svault) [alias: 2fa]</tspan>
+    </text>
+    <text x="20" y="833" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  clip           Securely manage and guard clipboard with auto-expiring TTL and history suppression</tspan>
+    </text>
+    <text x="20" y="854" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 [alias: clipboard]</tspan>
+    </text>
+    <text x="20" y="875" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  pack-dir       Pack an entire directory tree into an encrypted .svault container or carrier</tspan>
+    </text>
+    <text x="20" y="896" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 [alias: pack]</tspan>
+    </text>
+    <text x="20" y="917" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  unpack-dir     Unpack an encrypted .svault container or carrier back into directory [alias:</tspan>
+    </text>
+    <text x="20" y="938" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">                 unpack]</tspan>
+    </text>
+    <text x="20" y="959" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  keyfile        Manage cryptographic keyfiles for two-factor (2FA) container sealing</tspan>
+    </text>
+    <text x="20" y="980" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  stream         Chunked streaming encryption and decryption for multi-GB files (constant RAM)</tspan>
+    </text>
+    <text x="20" y="1001" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  help           Print this message or the help of the given subcommand(s)</tspan>
+    </text>
+    <text x="20" y="1022" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3"></tspan>
+    </text>
+    <text x="20" y="1043" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">Options:</tspan>
+    </text>
+    <text x="20" y="1064" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  -h, --help     Print help</tspan>
+    </text>
+    <text x="20" y="1085" font-family="Consolas, 'Cascadia Code', monospace" font-size="13">
+      <tspan fill="#e6edf3">  -V, --version  Print version</tspan>
+    </text>
+
+  </g>
+</svg>

@@ -16,12 +16,13 @@ mod policy;
 mod shamir;
 mod shred;
 mod stego;
+mod stream;
 mod totp;
 mod wav;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use cli::{Cli, ClipAction, Commands, KeyfileAction, TotpAction};
+use cli::{Cli, ClipAction, Commands, KeyfileAction, StreamAction, TotpAction};
 use colored::Colorize;
 use std::fs;
 use std::io::{Read, Write};
@@ -73,6 +74,93 @@ fn parse_cli_at_time(at_time: Option<&str>) -> Result<Option<u64>> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn execute_standard_decrypt(
+    input: std::path::PathBuf,
+    output: Option<std::path::PathBuf>,
+    passphrase: Option<String>,
+    keyfile: Option<std::path::PathBuf>,
+    decoy_passphrase: Option<String>,
+    clip: bool,
+    clip_ttl: u64,
+    at_time: Option<String>,
+) -> Result<()> {
+    let raw_container = fs::read(&input)
+        .with_context(|| format!("failed to read container: {}", input.display()))?;
+    let container = if armor::is_armored(&raw_container) {
+        let text =
+            std::str::from_utf8(&raw_container).context("armored container is not valid UTF-8")?;
+        armor::dearmor_data(text)?.to_vec()
+    } else {
+        raw_container
+    };
+    let at_time_val = parse_cli_at_time(at_time.as_deref())?;
+    let mut plain = if let Some(d_pass) = decoy_passphrase {
+        if crypto::is_decoy_container(&container) {
+            decoy::open_decoy_explicit_with_keyfile(
+                &container,
+                passphrase.as_deref(),
+                keyfile.as_deref(),
+                Some(&d_pass),
+            )?
+        } else {
+            crypto::open_at_with_keyfile(
+                &container,
+                Some(&d_pass),
+                keyfile.as_deref(),
+                at_time_val,
+            )?
+        }
+    } else if crypto::is_decoy_container(&container) {
+        decoy::open_decoy_explicit_with_keyfile(
+            &container,
+            passphrase.as_deref(),
+            keyfile.as_deref(),
+            None,
+        )?
+    } else if passphrase.is_some() || keyfile.is_some() {
+        crypto::open_at_with_keyfile(
+            &container,
+            passphrase.as_deref(),
+            keyfile.as_deref(),
+            at_time_val,
+        )?
+    } else {
+        anyhow::bail!("either --passphrase, --keyfile, or --decoy-passphrase must be provided");
+    };
+    if let Some(ref out_path) = output {
+        fs::write(out_path, &plain)
+            .with_context(|| format!("failed to write output: {}", out_path.display()))?;
+        println!(
+            "{} decrypted {} bytes -> {}",
+            "ok".green().bold(),
+            plain.len(),
+            out_path.display()
+        );
+    } else if !clip {
+        anyhow::bail!("either --output or --clip must be provided");
+    }
+    if clip {
+        match std::str::from_utf8(&plain) {
+            Ok(text) => {
+                let _ =
+                    clipboard_guard::guard_interactive(text, clip_ttl, Some("decrypted vault"))?;
+            }
+            Err(_) => {
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&plain);
+                let _ = clipboard_guard::guard_interactive(
+                    &b64,
+                    clip_ttl,
+                    Some("decrypted binary (base64)"),
+                )?;
+            }
+        }
+    }
+    plain.zeroize();
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -90,15 +178,55 @@ fn main() -> Result<()> {
             expires_at,
             expires_in,
             policy_desc,
+            stream,
+            chunk_size,
         } => {
-            let raw = fs::read(&input)
-                .with_context(|| format!("failed to read input file: {}", input.display()))?;
             let policy = parse_cli_policy(
                 not_before.as_deref(),
                 expires_at.as_deref(),
                 expires_in.as_deref(),
                 policy_desc.as_deref(),
             )?;
+            let parsed_chunk_size = match chunk_size {
+                Some(ref cs) => Some(stream::parse_chunk_size(cs)?),
+                None => None,
+            };
+            if stream || parsed_chunk_size.is_some() {
+                if decoy.is_some() || padding > 0 {
+                    anyhow::bail!(
+                        "streaming encryption cannot be combined with --decoy or --padding"
+                    );
+                }
+                let summary = stream::encrypt_file_stream(
+                    &input,
+                    &output,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    policy.as_ref(),
+                    parsed_chunk_size,
+                )?;
+                let policy_msg = match policy {
+                    Some(ref p) => format!(
+                        " policy={}",
+                        p.status_summary(policy::current_utc_timestamp())
+                    ),
+                    None => String::new(),
+                };
+                println!(
+                    "{} encrypted {} bytes in {} chunks -> {} (chunk_size: {} bytes, dpapi={}{})",
+                    "ok".green().bold(),
+                    summary.total_plaintext_bytes,
+                    summary.total_chunks,
+                    output.display(),
+                    summary.chunk_size,
+                    dpapi,
+                    policy_msg
+                );
+                return Ok(());
+            }
+            let raw = fs::read(&input)
+                .with_context(|| format!("failed to read input file: {}", input.display()))?;
             let sealed = if let Some(decoy_path) = decoy {
                 let d_pass = decoy_passphrase.ok_or_else(|| {
                     anyhow::anyhow!("--decoy-passphrase is required when --decoy is specified")
@@ -193,8 +321,50 @@ fn main() -> Result<()> {
             clip,
             clip_ttl,
             at_time,
+            stream,
+        } => {
+            let is_stream = stream || {
+                if let Ok(mut f) = fs::File::open(&input) {
+                    let mut magic = [0u8; 4];
+                    f.read_exact(&mut magic).is_ok() && &magic == stream::MAGIC
+                } else {
+                    false
+                }
+            };
+            if is_stream {
+                let out_path = output.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("--output is required for streaming decryption")
+                })?;
+                let at_time_val = parse_cli_at_time(at_time.as_deref())?;
+                let summary = stream::decrypt_file_stream(
+                    &input,
+                    out_path,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    at_time_val,
+                )?;
+                println!(
+                    "{} decrypted {} bytes in {} chunks -> {}",
+                    "ok".green().bold(),
+                    summary.total_plaintext_bytes,
+                    summary.total_chunks,
+                    out_path.display()
+                );
+                return Ok(());
+            }
+
+            execute_standard_decrypt(
+                input,
+                output,
+                passphrase,
+                keyfile,
+                decoy_passphrase,
+                clip,
+                clip_ttl,
+                at_time,
+            )?;
         }
-        | Commands::DecryptDecoy {
+        Commands::DecryptDecoy {
             input,
             output,
             passphrase,
@@ -204,84 +374,16 @@ fn main() -> Result<()> {
             clip_ttl,
             at_time,
         } => {
-            let raw_container = fs::read(&input)
-                .with_context(|| format!("failed to read container: {}", input.display()))?;
-            let container = if armor::is_armored(&raw_container) {
-                let text = std::str::from_utf8(&raw_container)
-                    .context("armored container is not valid UTF-8")?;
-                armor::dearmor_data(text)?.to_vec()
-            } else {
-                raw_container
-            };
-            let at_time_val = parse_cli_at_time(at_time.as_deref())?;
-            let mut plain = if let Some(d_pass) = decoy_passphrase {
-                if crypto::is_decoy_container(&container) {
-                    decoy::open_decoy_explicit_with_keyfile(
-                        &container,
-                        passphrase.as_deref(),
-                        keyfile.as_deref(),
-                        Some(&d_pass),
-                    )?
-                } else {
-                    crypto::open_at_with_keyfile(
-                        &container,
-                        Some(&d_pass),
-                        keyfile.as_deref(),
-                        at_time_val,
-                    )?
-                }
-            } else if crypto::is_decoy_container(&container) {
-                decoy::open_decoy_explicit_with_keyfile(
-                    &container,
-                    passphrase.as_deref(),
-                    keyfile.as_deref(),
-                    None,
-                )?
-            } else if passphrase.is_some() || keyfile.is_some() {
-                crypto::open_at_with_keyfile(
-                    &container,
-                    passphrase.as_deref(),
-                    keyfile.as_deref(),
-                    at_time_val,
-                )?
-            } else {
-                anyhow::bail!(
-                    "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
-                );
-            };
-            if let Some(ref out_path) = output {
-                fs::write(out_path, &plain)
-                    .with_context(|| format!("failed to write output: {}", out_path.display()))?;
-                println!(
-                    "{} decrypted {} bytes -> {}",
-                    "ok".green().bold(),
-                    plain.len(),
-                    out_path.display()
-                );
-            } else if !clip {
-                anyhow::bail!("either --output or --clip must be provided");
-            }
-            if clip {
-                match std::str::from_utf8(&plain) {
-                    Ok(text) => {
-                        let _ = clipboard_guard::guard_interactive(
-                            text,
-                            clip_ttl,
-                            Some("decrypted vault"),
-                        )?;
-                    }
-                    Err(_) => {
-                        use base64::Engine;
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(&plain);
-                        let _ = clipboard_guard::guard_interactive(
-                            &b64,
-                            clip_ttl,
-                            Some("decrypted binary (base64)"),
-                        )?;
-                    }
-                }
-            }
-            plain.zeroize();
+            execute_standard_decrypt(
+                input,
+                output,
+                passphrase,
+                keyfile,
+                decoy_passphrase,
+                clip,
+                clip_ttl,
+                at_time,
+            )?;
         }
 
         Commands::Embed {
@@ -877,6 +979,79 @@ fn main() -> Result<()> {
         }
 
         Commands::Inspect { input, json } => {
+            if let Ok(mut f) = fs::File::open(&input) {
+                let mut magic = [0u8; 4];
+                if f.read_exact(&mut magic).is_ok() && &magic == stream::MAGIC {
+                    let info = stream::inspect_stream_file(&input)?;
+                    if json {
+                        let mut out = serde_json::json!({
+                            "target_file": input.display().to_string(),
+                            "container_type": "stream",
+                            "container_version": info.version,
+                            "dpapi_bound": info.dpapi_bound,
+                            "chunk_size": info.chunk_size,
+                            "salt_hex": info.salt_hex,
+                            "base_nonce_hex": info.base_nonce_hex,
+                            "wrapped_key_bytes": info.wrapped_key_bytes,
+                        });
+                        if let Some(ref pol) = info.policy {
+                            let now = policy::current_utc_timestamp();
+                            out["policy"] = serde_json::json!({
+                                "status": pol.status_at(now),
+                                "status_summary": pol.status_summary(now),
+                                "created_at": pol.created_at,
+                                "created_at_iso": pol.format_created_at(),
+                                "not_before": pol.not_before,
+                                "not_before_iso": pol.format_not_before(),
+                                "expires_at": pol.expires_at,
+                                "expires_at_iso": pol.format_expires_at(),
+                                "description": pol.description,
+                            });
+                        }
+                        println!("{}", serde_json::to_string_pretty(&out)?);
+                    } else {
+                        println!("container_type:    stream (chunked AEAD)");
+                        println!("container_version: {}", info.version);
+                        println!("dpapi_bound:       {}", info.dpapi_bound);
+                        println!(
+                            "chunk_size:        {} bytes ({:.2} MiB)",
+                            info.chunk_size,
+                            info.chunk_size as f64 / (1024.0 * 1024.0)
+                        );
+                        println!("salt_hex:          {}", info.salt_hex);
+                        println!("base_nonce_hex:    {}", info.base_nonce_hex);
+                        if let Some(ref pol) = info.policy {
+                            let now = policy::current_utc_timestamp();
+                            println!("policy_header:     present");
+                            println!("policy_status:     {}", pol.status_summary(now));
+                            println!(
+                                "policy_created_at: {} ({})",
+                                pol.created_at,
+                                pol.format_created_at()
+                            );
+                            if let Some(nb) = pol.not_before {
+                                println!(
+                                    "policy_not_before: {} ({})",
+                                    nb,
+                                    policy::format_iso8601_utc(nb)
+                                );
+                            }
+                            if let Some(exp) = pol.expires_at {
+                                println!(
+                                    "policy_expires_at: {} ({})",
+                                    exp,
+                                    policy::format_iso8601_utc(exp)
+                                );
+                            }
+                            if let Some(ref desc) = pol.description {
+                                println!("policy_desc:       {}", desc);
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+
             let raw = fs::read(&input)
                 .with_context(|| format!("failed to read file: {}", input.display()))?;
             let (container, armor_meta) = if armor::is_armored(&raw) {
@@ -1467,6 +1642,9 @@ fn main() -> Result<()> {
         }
         Commands::Keyfile { action } => {
             handle_keyfile_command(action)?;
+        }
+        Commands::Stream { action } => {
+            handle_stream_command(action)?;
         }
     }
 
@@ -2291,6 +2469,188 @@ fn handle_keyfile_command(action: KeyfileAction) -> Result<()> {
         KeyfileAction::Fingerprint { path } => {
             let fp = keyfile::keyfile_fingerprint(&path)?;
             println!("{fp}");
+        }
+    }
+    Ok(())
+}
+
+fn handle_stream_command(action: StreamAction) -> Result<()> {
+    match action {
+        StreamAction::Encrypt {
+            input,
+            output,
+            mut passphrase,
+            keyfile,
+            dpapi,
+            chunk_size,
+            not_before,
+            expires_at,
+            expires_in,
+            policy_desc,
+            json,
+        } => {
+            let policy = parse_cli_policy(
+                not_before.as_deref(),
+                expires_at.as_deref(),
+                expires_in.as_deref(),
+                policy_desc.as_deref(),
+            )?;
+            let parsed_chunk_size = match chunk_size {
+                Some(ref cs) => Some(stream::parse_chunk_size(cs)?),
+                None => None,
+            };
+            let summary = stream::encrypt_file_stream(
+                &input,
+                &output,
+                passphrase.as_deref(),
+                keyfile.as_deref(),
+                dpapi,
+                policy.as_ref(),
+                parsed_chunk_size,
+            )?;
+            if let Some(ref mut p) = passphrase {
+                p.zeroize();
+            }
+            if json {
+                let out = serde_json::json!({
+                    "input": input.display().to_string(),
+                    "output": output.display().to_string(),
+                    "total_chunks": summary.total_chunks,
+                    "total_plaintext_bytes": summary.total_plaintext_bytes,
+                    "total_ciphertext_bytes": summary.total_ciphertext_bytes,
+                    "chunk_size": summary.chunk_size,
+                    "dpapi_bound": summary.dpapi_bound,
+                    "salt_hex": summary.salt_hex,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                let policy_msg = match policy {
+                    Some(ref p) => format!(
+                        " policy={}",
+                        p.status_summary(policy::current_utc_timestamp())
+                    ),
+                    None => String::new(),
+                };
+                println!(
+                    "{} encrypted {} bytes in {} chunks -> {} (chunk_size: {} bytes, dpapi={}{})",
+                    "ok".green().bold(),
+                    summary.total_plaintext_bytes,
+                    summary.total_chunks,
+                    output.display(),
+                    summary.chunk_size,
+                    dpapi,
+                    policy_msg
+                );
+            }
+        }
+        StreamAction::Decrypt {
+            input,
+            output,
+            mut passphrase,
+            keyfile,
+            at_time,
+            json,
+        } => {
+            let at_time_val = parse_cli_at_time(at_time.as_deref())?;
+            let summary = stream::decrypt_file_stream(
+                &input,
+                &output,
+                passphrase.as_deref(),
+                keyfile.as_deref(),
+                at_time_val,
+            )?;
+            if let Some(ref mut p) = passphrase {
+                p.zeroize();
+            }
+            if json {
+                let out = serde_json::json!({
+                    "input": input.display().to_string(),
+                    "output": output.display().to_string(),
+                    "total_chunks": summary.total_chunks,
+                    "total_plaintext_bytes": summary.total_plaintext_bytes,
+                    "total_ciphertext_bytes": summary.total_ciphertext_bytes,
+                    "chunk_size": summary.chunk_size,
+                    "dpapi_bound": summary.dpapi_bound,
+                    "salt_hex": summary.salt_hex,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} decrypted {} bytes in {} chunks -> {}",
+                    "ok".green().bold(),
+                    summary.total_plaintext_bytes,
+                    summary.total_chunks,
+                    output.display()
+                );
+            }
+        }
+        StreamAction::Inspect { input, json } => {
+            let info = stream::inspect_stream_file(&input)?;
+            if json {
+                let mut out = serde_json::json!({
+                    "target_file": input.display().to_string(),
+                    "container_type": "stream",
+                    "container_version": info.version,
+                    "dpapi_bound": info.dpapi_bound,
+                    "chunk_size": info.chunk_size,
+                    "salt_hex": info.salt_hex,
+                    "base_nonce_hex": info.base_nonce_hex,
+                    "wrapped_key_bytes": info.wrapped_key_bytes,
+                });
+                if let Some(ref pol) = info.policy {
+                    let now = policy::current_utc_timestamp();
+                    out["policy"] = serde_json::json!({
+                        "status": pol.status_at(now),
+                        "status_summary": pol.status_summary(now),
+                        "created_at": pol.created_at,
+                        "created_at_iso": pol.format_created_at(),
+                        "not_before": pol.not_before,
+                        "not_before_iso": pol.format_not_before(),
+                        "expires_at": pol.expires_at,
+                        "expires_at_iso": pol.format_expires_at(),
+                        "description": pol.description,
+                    });
+                }
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("container_type:    stream (chunked AEAD)");
+                println!("container_version: {}", info.version);
+                println!("dpapi_bound:       {}", info.dpapi_bound);
+                println!(
+                    "chunk_size:        {} bytes ({:.2} MiB)",
+                    info.chunk_size,
+                    info.chunk_size as f64 / (1024.0 * 1024.0)
+                );
+                println!("salt_hex:          {}", info.salt_hex);
+                println!("base_nonce_hex:    {}", info.base_nonce_hex);
+                if let Some(ref pol) = info.policy {
+                    let now = policy::current_utc_timestamp();
+                    println!("policy_header:     present");
+                    println!("policy_status:     {}", pol.status_summary(now));
+                    println!(
+                        "policy_created_at: {} ({})",
+                        pol.created_at,
+                        pol.format_created_at()
+                    );
+                    if let Some(nb) = pol.not_before {
+                        println!(
+                            "policy_not_before: {} ({})",
+                            nb,
+                            policy::format_iso8601_utc(nb)
+                        );
+                    }
+                    if let Some(exp) = pol.expires_at {
+                        println!(
+                            "policy_expires_at: {} ({})",
+                            exp,
+                            policy::format_iso8601_utc(exp)
+                        );
+                    }
+                    if let Some(ref desc) = pol.description {
+                        println!("policy_desc:       {}", desc);
+                    }
+                }
+            }
         }
     }
     Ok(())

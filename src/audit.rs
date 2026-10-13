@@ -236,6 +236,7 @@ pub enum CarrierType {
     BmpImage,
     ArmoredAscii,
     SvaultContainer,
+    StreamContainer,
     TextFile,
     BinaryData,
 }
@@ -248,6 +249,7 @@ impl std::fmt::Display for CarrierType {
             Self::BmpImage => write!(f, "BMP Image Carrier"),
             Self::ArmoredAscii => write!(f, "ASCII Armored Container (.svault.asc)"),
             Self::SvaultContainer => write!(f, "ShadowVault Encrypted Container"),
+            Self::StreamContainer => write!(f, "ShadowVault Streaming Container (.svault stream)"),
             Self::TextFile => write!(f, "Plaintext / Key File"),
             Self::BinaryData => write!(f, "Raw Binary Data"),
         }
@@ -604,6 +606,8 @@ pub fn audit_carrier_bytes(name: &str, data: &[u8]) -> Result<FileAuditReport> {
         audit_armored_carrier(name, data, shannon, chi_sq)
     } else if data.starts_with(SVLT_CONTAINER_MAGIC) {
         audit_svault_container(name, data, shannon, chi_sq)
+    } else if data.starts_with(b"SVST") {
+        audit_stream_container(name, data, shannon, chi_sq)
     } else if is_likely_text(data) {
         audit_plaintext_file(name, data, shannon, chi_sq)
     } else {
@@ -1601,6 +1605,258 @@ fn audit_svault_container(
             stego_lsb_present: false,
             trailing_bytes: 0,
             total_chunks_or_subchunks: 1,
+            salt_hex: Some(salt_hex),
+        },
+        anomalies,
+        findings,
+        recommendations,
+    })
+}
+
+fn audit_stream_container(
+    name: &str,
+    data: &[u8],
+    shannon: f64,
+    chi_sq: f64,
+) -> Result<FileAuditReport> {
+    let mut anomalies = Vec::new();
+    let mut findings = Vec::new();
+    let mut recommendations = Vec::new();
+
+    if data.len() < crate::stream::BASE_HEADER_LEN {
+        anomalies.push(format!(
+            "Streaming container is truncated ({len} bytes, minimum base header is {min} bytes)",
+            len = data.len(),
+            min = crate::stream::BASE_HEADER_LEN
+        ));
+        return Ok(FileAuditReport {
+            file_path: name.to_string(),
+            file_size: data.len(),
+            carrier_type: CarrierType::StreamContainer,
+            shannon_entropy: shannon,
+            chi_square: chi_sq,
+            verdict: CarrierVerdict::SuspiciousAnomaly,
+            details: CarrierDetails {
+                container_version: data.get(4).copied(),
+                dpapi_bound: data.get(5).map(|f| (f & crate::stream::FLAG_DPAPI) != 0),
+                decoy_container: Some(false),
+                payload_bytes: None,
+                stego_chunk_present: false,
+                stego_lsb_present: false,
+                trailing_bytes: 0,
+                total_chunks_or_subchunks: 0,
+                salt_hex: None,
+            },
+            anomalies,
+            findings,
+            recommendations: vec!["Streaming container is truncated and unrecoverable".into()],
+        });
+    }
+
+    let version = data[4];
+    let flags = data[5];
+    let dpapi_bound = (flags & crate::stream::FLAG_DPAPI) != 0;
+    let has_policy = (flags & crate::stream::FLAG_POLICY) != 0;
+    let chunk_size = u32::from_le_bytes([data[6], data[7], data[8], data[9]]);
+
+    if version != crate::stream::VERSION {
+        anomalies.push(format!(
+            "Unsupported streaming container version v{version} (supported: v{})",
+            crate::stream::VERSION
+        ));
+    }
+    let valid_flags = crate::stream::FLAG_DPAPI | crate::stream::FLAG_POLICY;
+    if (flags & !valid_flags) != 0 {
+        anomalies.push(format!(
+            "Unknown streaming container flag bits: {flags:#04x}"
+        ));
+    }
+    if !(crate::stream::MIN_CHUNK_SIZE..=crate::stream::MAX_CHUNK_SIZE).contains(&chunk_size) {
+        anomalies.push(format!(
+            "Streaming chunk size {chunk_size} out of valid bounds ({}..={})",
+            crate::stream::MIN_CHUNK_SIZE,
+            crate::stream::MAX_CHUNK_SIZE
+        ));
+    }
+
+    let salt = &data[10..26];
+    let salt_hex = salt.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let salt_entropy = shannon_entropy(salt);
+
+    findings.push(format!("Streaming container version: v{version}"));
+    findings.push(format!(
+        "Windows DPAPI stream key hardware binding: {dpapi_bound}"
+    ));
+    findings.push(format!(
+        "Chunk size: {} bytes ({:.2} MiB)",
+        chunk_size,
+        chunk_size as f64 / (1024.0 * 1024.0)
+    ));
+
+    if salt_entropy < 2.5 {
+        anomalies.push(format!(
+            "Low salt entropy ({salt_entropy:.2} bits/byte); KDF salt may lack CSPRNG randomness"
+        ));
+    }
+
+    let mut offset = crate::stream::BASE_HEADER_LEN;
+    if dpapi_bound {
+        if data.len() < offset + 4 {
+            anomalies.push("Streaming container truncated before DPAPI wrapped key length".into());
+        } else {
+            let klen = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+            if data.len() < offset + klen {
+                anomalies
+                    .push("Streaming container truncated within DPAPI wrapped key blob".into());
+            } else {
+                findings.push(format!("DPAPI wrapped stream key size: {klen} bytes"));
+                offset += klen;
+            }
+        }
+    }
+
+    if has_policy {
+        if data.len() < offset + 4 {
+            anomalies.push("Streaming container truncated before policy header length".into());
+        } else {
+            let plen = u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+            if data.len() < offset + plen {
+                anomalies.push("Streaming container truncated within policy header".into());
+            } else {
+                match crate::policy::PolicyHeader::from_bytes(&data[offset..offset + plen]) {
+                    Ok(pol) => {
+                        let now = crate::policy::current_utc_timestamp();
+                        findings.push(format!("Container policy: {}", pol.status_summary(now)));
+                        if let Some(nb) = pol.not_before {
+                            findings.push(format!(
+                                "Policy not_before: {}",
+                                crate::policy::format_iso8601_utc(nb)
+                            ));
+                        }
+                        if let Some(exp) = pol.expires_at {
+                            findings.push(format!(
+                                "Policy expires_at: {}",
+                                crate::policy::format_iso8601_utc(exp)
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        anomalies.push(format!(
+                            "Failed to parse streaming container policy header: {e}"
+                        ));
+                    }
+                }
+                offset += plen;
+            }
+        }
+    }
+
+    // Inspect chunks
+    let mut chunk_count = 0usize;
+    let mut chunk_scan_offset = offset;
+    let mut total_chunk_payload = 0usize;
+    let mut seen_corrupted_chunk = false;
+
+    while chunk_scan_offset + 4 <= data.len() {
+        let clen = u32::from_le_bytes([
+            data[chunk_scan_offset],
+            data[chunk_scan_offset + 1],
+            data[chunk_scan_offset + 2],
+            data[chunk_scan_offset + 3],
+        ]) as usize;
+        chunk_scan_offset += 4;
+        let max_chunk_len = (chunk_size as usize) + 16;
+        if clen < 16 || clen > max_chunk_len {
+            anomalies.push(format!(
+                "Invalid chunk {chunk_count} declared length ({clen} bytes, expected 16..={max_chunk_len})"
+            ));
+            seen_corrupted_chunk = true;
+            break;
+        }
+        if chunk_scan_offset + clen > data.len() {
+            anomalies.push(format!(
+                "Streaming container truncated within chunk {chunk_count} (needs {clen} bytes, only {} left)",
+                data.len() - chunk_scan_offset
+            ));
+            seen_corrupted_chunk = true;
+            break;
+        }
+        total_chunk_payload += clen.saturating_sub(16);
+        chunk_scan_offset += clen;
+        chunk_count += 1;
+    }
+
+    let trailing_bytes = data.len().saturating_sub(chunk_scan_offset);
+    if trailing_bytes > 0 && !seen_corrupted_chunk {
+        anomalies.push(format!(
+            "Found {trailing_bytes} trailing bytes after chunk framing"
+        ));
+    }
+
+    if chunk_count > 0 {
+        findings.push(format!(
+            "Detected {chunk_count} authenticated stream chunks"
+        ));
+    }
+
+    let ciphertext_bytes = &data[offset..];
+    if !ciphertext_bytes.is_empty() {
+        let cipher_entropy = shannon_entropy(ciphertext_bytes);
+        findings.push(format!(
+            "Ciphertext Shannon entropy: {cipher_entropy:.4} bits/byte (ideal random: ~8.0)"
+        ));
+        if ciphertext_bytes.len() >= 256 && cipher_entropy < 7.2 {
+            anomalies.push(format!(
+                "Ciphertext Shannon entropy is unusually low ({cipher_entropy:.2} bits/byte)"
+            ));
+        }
+    }
+
+    let verdict = if !anomalies.is_empty() {
+        CarrierVerdict::SuspiciousAnomaly
+    } else {
+        CarrierVerdict::EncryptedContainer
+    };
+
+    if verdict == CarrierVerdict::EncryptedContainer {
+        recommendations.push(
+            "Streaming container is intact; decrypt with 'svault stream decrypt' or 'svault decrypt'"
+                .into(),
+        );
+    } else {
+        recommendations.push(
+            "Streaming container exhibits anomalies or corruption; verify before decrypting".into(),
+        );
+    }
+
+    Ok(FileAuditReport {
+        file_path: name.to_string(),
+        file_size: data.len(),
+        carrier_type: CarrierType::StreamContainer,
+        shannon_entropy: shannon,
+        chi_square: chi_sq,
+        verdict,
+        details: CarrierDetails {
+            container_version: Some(version),
+            dpapi_bound: Some(dpapi_bound),
+            decoy_container: Some(false),
+            payload_bytes: Some(total_chunk_payload),
+            stego_chunk_present: false,
+            stego_lsb_present: false,
+            trailing_bytes,
+            total_chunks_or_subchunks: chunk_count,
             salt_hex: Some(salt_hex),
         },
         anomalies,

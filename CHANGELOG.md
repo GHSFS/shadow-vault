@@ -5,6 +5,32 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-10-13
+
+### Added
+- Chunked Streaming Encryption Engine for Multi-GB Files (`src/stream.rs`):
+  - Constant $O(1)$ memory two-buffer sliding window supporting arbitrary file sizes (from 0 bytes to multi-gigabyte files) with zero whole-file buffering.
+  - Authenticated `SVST` v1 binary wire format:
+    - 38-byte base header: magic `b"SVST"` (4B), version 1 (1B), flags (1B), chunk size (4B LE, 64 KiB–64 MiB, default 4 MiB), salt (16B), and base nonce (12B).
+    - Optional authenticated policy header (`SVPO` v1) with temporal access rules (time-lock, expiration).
+    - Windows DPAPI stream key protection: 32-byte CSPRNG stream key wrapped with Argon2id-derived ChaCha20-Poly1305 key and bound to machine/user credentials via `CryptProtectData`.
+  - Cryptographic chunking & tamper resistance:
+    - Per-chunk unique nonce derivation: `SHA256(b"shadow-vault:stream-chunk-nonce:v1" || base_nonce || chunk_index.to_le_bytes() || [chunk_tag])[0..12]`.
+    - Per-chunk Additional Authenticated Data (AAD): `b"SVST" || chunk_index.to_le_bytes() || [chunk_tag] || salt || policy_hash`, preventing chunk reordering, truncation, injection, or cross-container splicing attacks.
+    - Clean chunk boundary handling: intermediate chunk tag `0x00`, final chunk tag `0x01` (including 0-byte plaintext empty chunk).
+- Dedicated `stream` CLI subcommand (`svault stream`):
+  - `svault stream encrypt -i <input> -o <output> [-p <pass>] [-k <keyfile>] [--chunk-size <size>] [--dpapi] [--not-before <ts>] [--expires-at <ts>]`: streaming encryption.
+  - `svault stream decrypt -i <input> -o <output> [-p <pass>] [-k <keyfile>] [--at-time <ts>]`: streaming decryption.
+  - `svault stream inspect <container> [--json]`: zero-decryption header inspection of streaming containers.
+- Transparent CLI integration & auto-detection:
+  - Added `--stream` flag and `--chunk-size <size>` to `svault encrypt` and `svault decrypt`.
+  - Auto-detection: `svault decrypt` and `svault inspect` automatically recognize the `b"SVST"` magic header and dispatch directly to the streaming engine without loading entire containers into memory.
+- Steganalysis & Carrier Audit Integration (`src/audit.rs`):
+  - Added `CarrierType::StreamContainer` and `audit_stream_container` recognizing `b"SVST"` streaming containers.
+  - Computes Shannon entropy, chunk structure, DPAPI binding, and policy header integrity.
+- Comprehensive Domain Integration Test Suite (`tests/stream_test.rs`):
+  - 10 integration tests covering 0-byte roundtrip, small file roundtrip, exact 64 KiB chunk boundary, multi-chunk roundtrip with auto-detect, 2FA keyfile streaming, policy time-lock and expiration enforcement, chunk tampering rejection, truncated stream detection, carrier audit inspection, and Windows DPAPI hardware binding (100% pass).
+
 ## [0.12.0] - 2026-10-13
 
 ### Added

@@ -31,7 +31,8 @@
 9. **Reed-Solomon / Parity Error-Correcting Armor (`src/armor.rs`)** — adds block parity recovery stripes and ASCII-armored `.svault.asc` export/import so containers survive partial bit rot or text transmission corruptions. Employs a Cauchy generator matrix $[I_K; A]$ over $\text{GF}(256)$ guaranteeing Maximum Distance Separable (MDS) erasure correction: ANY $K$ intact shards out of $K + M$ total stripes can reconstruct all original data shards. Supports automated corruption detection, self-healing document repair (`svault repair`), auto-detection in `inspect` and `audit`, and auto-expiring clipboard guard (`svault armor`, `svault dearmor`, `svault repair`).
 10. **Directory & Multi-File Manifest Packing (`src/archive.rs`)** — packs entire directory trees with relative path canonicalization, multi-layered Zip Slip / path traversal prevention, zip bomb defense, per-file SHA-256 cryptographic manifests, and Unix/Windows permissions preservation into a single sealed `SVLT` container (`svault pack-dir` / `svault unpack-dir`). Supports `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi`, and transparent stego (PNG/WAV/BMP) & ASCII armor carrier extraction.
 11. **Keyfile + Passphrase Two-Factor Key Derivation (`src/keyfile.rs`)** — combines an external hardware or USB keyfile (`--keyfile <path>`) with user passphrases via streaming 64 KiB HMAC-SHA256 pre-hashing prior to Argon2id key derivation. Supports full 2FA (passphrase + keyfile) and keyfile-only operational modes, built-in CSPRNG keyfile generation (`svault keyfile generate`), SHA-256 fingerprinting (`svault keyfile fingerprint`), Shannon entropy inspection (`svault keyfile inspect`), and transparent integration across all steganography carriers and directory archiving.
-12. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
+12. **Chunked Streaming Encryption for Multi-GB Files (`src/stream.rs`)** — encrypts and decrypts multi-gigabyte files and streams with constant $O(1)$ RAM using an authenticated sliding window (default 4 MiB chunks, range 64 KiB–64 MiB). Employs `SVST` v1 headers, per-chunk nonce derivation (`SHA256(b"shadow-vault:stream-chunk-nonce:v1" || base_nonce || chunk_index || tag)`), per-chunk AAD tamper defense, optional policy temporal constraints, and Windows DPAPI hardware stream key wrapping (`svault stream encrypt`, `svault stream decrypt`, `svault stream inspect`, `--stream`, `--chunk-size`).
+13. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
 ### Features
 
@@ -100,6 +101,11 @@
   - **CSPRNG Keyfile Generator (`svault keyfile generate`)**: creates cryptographically secure hardware keyfiles (default 64 bytes) via `rand::rngs::OsRng`.
   - **Keyfile Inspection & Fingerprint (`inspect` / `fingerprint`)**: computes SHA-256 fingerprints (`SHA256:<hex>`) and Shannon entropy quality ratings with sample-size normalization.
   - **Universal Command Binding**: `--keyfile` / `-k` supported across `encrypt`, `decrypt`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `pack-dir`, `unpack-dir`, and decoy vaults.
+- **Chunked Streaming Encryption (`stream`)** — constant $O(1)$ memory streaming authenticated encryption:
+  - **`SVST` v1 Wire Format**: 38-byte base header (magic `SVST`, version 1, flags, chunk size, salt, base nonce) with optional `SVPO` policy header and DPAPI wrapped stream key.
+  - **Chunk Nonce & AAD Derivation**: unique nonce per chunk preventing IV reuse; AAD incorporates chunk index, intermediate/final tag, salt, and policy hash to eliminate chunk reordering, truncation, or substitution.
+  - **Zero Whole-File Buffering**: 2-buffer sliding window processes arbitrarily large files (0 bytes to multi-gigabytes) without memory exhaustion.
+  - **Transparent Auto-Detection**: `svault decrypt` and `svault inspect` automatically recognize streaming containers and dispatch to the streaming engine.
 - **3-Pass Secure File Shredder (`shred`)** — overwrites sensitive plaintext files with `0x00`, `0xFF`, and CSPRNG random bytes before unlinking.
 - **Single Static Binary** — compiled with `+crt-static`, `opt-level = "z"`, LTO, and stripped symbols. Zero external runtime dependencies.
 
@@ -259,6 +265,18 @@ svault decrypt -i hardware.svault -o restored.txt -k usb_token.key
 # 39. Pack directory into encrypted vault with Keyfile 2FA
 svault pack-dir -i ./confidential -o archive.svault -p "pack-pass" -k usb_token.key
 svault unpack-dir -i archive.svault -o ./unpacked -p "pack-pass" -k usb_token.key
+
+# 40. Encrypt a multi-gigabyte file with chunked streaming (default 4 MiB chunks or custom)
+svault stream encrypt -i large_dataset.iso -o large_dataset.svault -p "stream-pass"
+svault encrypt -i database.backup -o db.svault -p "stream-pass" --stream --chunk-size 8M
+
+# 41. Decrypt streaming container (auto-detects SVST format or explicit stream subcommand)
+svault decrypt -i large_dataset.svault -o restored.iso -p "stream-pass"
+svault stream decrypt -i db.svault -o restored_db.backup -p "stream-pass"
+
+# 42. Inspect streaming container metadata without decrypting
+svault stream inspect large_dataset.svault
+svault inspect large_dataset.svault --json
 ```
 
 ### License & Attribution
@@ -290,7 +308,8 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
 9. **리드-솔로몬 / 패리티 오류 정정 아머 (`src/armor.rs`)** — 블록 패리티 복구 스트라이프와 ASCII 아머드 `.svault.asc` 내보내기/가져오기/복구를 지원하여 부분적인 비트 손상(Bit Rot)이나 텍스트 전송 채널 상의 손상에서도 컨테이너를 복원합니다. $\text{GF}(256)$ 상의 코시(Cauchy) 생성 행렬 $[I_K; A]$을 사용하여 MDS(최대 거리 분리) 부호 성질을 보장하므로, 총 $K + M$개 스트라이프 중 임의의 $K$개 온전한 조각만 있으면 모든 원본 데이터를 완벽하게 재구성합니다. 자동 손상 탐지, 자가 치유 복구(`svault repair`), `inspect` 및 `audit` 자동 감지, 자동 만료 클립보드 가드를 결합 지원합니다 (`svault armor`, `svault dearmor`, `svault repair`).
 10. **디렉터리 및 다중 파일 매니페스트 패킹 (`src/archive.rs`)** — 전체 디렉터리 트리를 상대 경로 정규화, 다중 계층 Zip Slip / 경로 순회(Path Traversal) 방어, 압축 폭탄(Zip Bomb) 방어, 파일별 SHA-256 암호학적 매니페스트, Unix/Windows 파일 권한 보존과 함께 단일 `SVLT` 컨테이너로 완전 밀봉(`svault pack-dir` / `svault unpack-dir`)합니다. `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi` 및 투명한 스테가노그래피(PNG/WAV/BMP) & ASCII 아머 캐리어 추출을 지원합니다.
 11. **키파일 + 비밀번호 이중 인증(2FA) 키 유도 (`src/keyfile.rs`)** — 외장 하드웨어 또는 USB 키파일(`--keyfile <경로>`)을 사용자 비밀번호와 결합하여 64 KiB 스트리밍 HMAC-SHA256 사전 해싱 후 Argon2id로 키를 유도합니다. 비밀번호 + 키파일 이중 인증(2FA) 및 키파일 단독 모드를 모두 지원하며, 내장 CSPRNG 키파일 생성(`svault keyfile generate`), SHA-256 지문 출력(`svault keyfile fingerprint`), 섀넌 엔트로피 감사(`svault keyfile inspect`), 제로화 메모리 소거 및 모든 미디어 스테가노그래피 캐리어·디렉터리 패킹과의 투명한 통합을 지원합니다.
-12. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
+12. **청크 스트리밍 암호화 엔진 (`src/stream.rs`)** — 멀티 기가바이트(Multi-GB) 대용량 파일과 데이터 스트림을 $O(1)$ 고정 RAM 슬라이딩 윈도우로 안전하게 암호화 및 복호화합니다 (기본 4 MiB 청크, 64 KiB–64 MiB 범위). `SVST` v1 바이너리 헤더, 청크별 고유 논스 유도(`SHA256(b"shadow-vault:stream-chunk-nonce:v1" || base_nonce || chunk_index || tag)`), 청크별 AAD 위변조 방어, 시간 잠금/만료 정책 결합 및 Windows DPAPI 스트림 키 하드웨어 귀속을 지원합니다 (`svault stream encrypt`, `svault stream decrypt`, `svault stream inspect`, `--stream`, `--chunk-size`).
+13. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
 ### 주요 기능
 
@@ -356,6 +375,11 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
   - **CSPRNG 키파일 생성기 (`svault keyfile generate`)**: `rand::rngs::OsRng` 기반의 고품질 난수 키파일(기본 64바이트) 안전 생성.
   - **지문 및 섀넌 엔트로피 검사 (`inspect` / `fingerprint`)**: SHA-256 지문(`SHA256:<hex>`) 및 표본 크기 정규화가 적용된 섀넌 엔트로피 품질 평가 제공.
   - **전 명령어 유니버설 연동**: `encrypt`, `decrypt`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `pack-dir`, `unpack-dir`, 디코이 금고 등 전체 암호화 워크플로우에 `--keyfile` / `-k` 완전 결합.
+- **청크 스트리밍 암호화 (`stream`)** — 고정 $O(1)$ 메모리 대용량 스트리밍 인증 암호화:
+  - **`SVST` v1 바이너리 와이어 포맷**: 38바이트 베이스 헤더(`SVST`, 버전 1, 플래그, 청크 크기, 솔트, 베이스 논스)와 선택적 `SVPO` 정책 헤더 및 DPAPI 암호화 스트림 키 탑재.
+  - **청크 논스 및 AAD 암호학적 결합**: 청크마다 고유 논스를 유도하여 IV 재사용을 방지하고, AAD에 청크 인덱스, 태그(중간/종료), 솔트, 정책 해시를 바인딩하여 순서 변경, 누락, 주입 공격을 원천 방어.
+  - **전체 파일 메모리 적재 제로(Zero)**: 2개 버퍼 슬라이딩 윈도우로 0바이트부터 수십 기가바이트 파일까지 메모리 고갈 없이 고속 처리.
+  - **투명한 자동 감지**: `svault decrypt` 및 `svault inspect`가 스트리밍 컨테이너를 자동 인식하여 스트리밍 엔진으로 즉시 분기.
 - **다중 패스 완전 파쇄 (`shred`)** — 원본 평문 파일을 삭제할 때 `0x00` ➔ `0xFF` ➔ 난수 덮어쓰기 후 디스크 동기화 및 길이 0 절삭을 수행해 포렌식 복구를 차단합니다.
 
 ### 사용법 요약
@@ -501,6 +525,18 @@ svault decrypt -i hardware.svault -o restored.txt -k usb_token.key
 # 39. 키파일 2FA를 적용한 디렉터리 아카이브 패킹 및 언패킹
 svault pack-dir -i ./confidential -o archive.svault -p "패킹비밀번호" -k usb_token.key
 svault unpack-dir -i archive.svault -o ./unpacked -p "패킹비밀번호" -k usb_token.key
+
+# 40. 멀티 기가바이트 대용량 파일 청크 스트리밍 암호화 (기본 4 MiB 또는 사용자 지정 청크)
+svault stream encrypt -i large_dataset.iso -o large_dataset.svault -p "스트리밍비밀번호"
+svault encrypt -i database.backup -o db.svault -p "스트리밍비밀번호" --stream --chunk-size 8M
+
+# 41. 스트리밍 컨테이너 복호화 (SVST 자동 감지 또는 전용 stream 서브커맨드)
+svault decrypt -i large_dataset.svault -o restored.iso -p "스트리밍비밀번호"
+svault stream decrypt -i db.svault -o restored_db.backup -p "스트리밍비밀번호"
+
+# 42. 복호화 없이 스트리밍 컨테이너 메타데이터 검사 (텍스트 및 JSON)
+svault stream inspect large_dataset.svault
+svault inspect large_dataset.svault --json
 ```
 
 ### 저작권 및 라이선스

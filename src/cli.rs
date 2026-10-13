@@ -69,6 +69,14 @@ pub enum Commands {
         /// Optional descriptive label or policy comment
         #[arg(long = "policy-desc")]
         policy_desc: Option<String>,
+
+        /// Use chunked streaming encryption mode (constant RAM for multi-GB files)
+        #[arg(long = "stream")]
+        stream: bool,
+
+        /// Stream chunk size in bytes or with suffix (e.g. 4194304, 4m, 1m, 64k; default: 4 MiB)
+        #[arg(long = "chunk-size")]
+        chunk_size: Option<String>,
     },
 
     /// Encrypt a dual-password container with primary hidden secret and plausible decoy
@@ -141,6 +149,10 @@ pub enum Commands {
         /// Optional simulated reference UTC timestamp for policy validation
         #[arg(long = "at-time")]
         at_time: Option<String>,
+
+        /// Explicit streaming container decryption mode
+        #[arg(long = "stream")]
+        stream: bool,
     },
 
     /// Decrypt a plausible deniability container (seamless or explicit decoy passphrase)
@@ -770,6 +782,103 @@ pub enum Commands {
     Keyfile {
         #[command(subcommand)]
         action: KeyfileAction,
+    },
+
+    /// Chunked streaming encryption and decryption for multi-GB files (constant RAM)
+    #[command(name = "stream")]
+    Stream {
+        #[command(subcommand)]
+        action: StreamAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum StreamAction {
+    /// Encrypt a large file or stream into a .svault streaming container
+    #[command(visible_alias = "enc")]
+    Encrypt {
+        /// Input file path
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Output .svault streaming container file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Encryption passphrase
+        #[arg(short, long, required_unless_present = "keyfile")]
+        passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only encryption
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
+        /// Bind container to the current Windows user/machine via DPAPI
+        #[arg(long)]
+        dpapi: bool,
+
+        /// Stream chunk size in bytes or with suffix (e.g. 4194304, 4m, 1m, 64k; default: 4 MiB)
+        #[arg(long = "chunk-size")]
+        chunk_size: Option<String>,
+
+        /// Time-lock activation timestamp or relative offset (e.g. "2026-10-15T00:00:00Z", "+1h")
+        #[arg(long = "not-before")]
+        not_before: Option<String>,
+
+        /// Expiration timestamp after which decryption is refused (e.g. "2026-12-31T23:59:59Z")
+        #[arg(long = "expires-at")]
+        expires_at: Option<String>,
+
+        /// Expiration duration from now (e.g. "24h", "7d", "30d", "3600s")
+        #[arg(long = "expires-in")]
+        expires_in: Option<String>,
+
+        /// Optional descriptive label or policy comment
+        #[arg(long = "policy-desc")]
+        policy_desc: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Decrypt a .svault streaming container back to original file
+    #[command(visible_alias = "dec")]
+    Decrypt {
+        /// Input .svault streaming container file path
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Output plaintext file path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Decryption passphrase
+        #[arg(short, long)]
+        passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only decryption
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
+        /// Optional simulated reference UTC timestamp for policy validation
+        #[arg(long = "at-time")]
+        at_time: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Inspect a .svault streaming container header without decrypting
+    Inspect {
+        /// Target .svault streaming container file path
+        #[arg(value_name = "TARGET")]
+        input: PathBuf,
+
+        /// Output inspection report in structured JSON format
+        #[arg(long)]
+        json: bool,
     },
 }
 

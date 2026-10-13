@@ -18,6 +18,7 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [x] **Directory & Multi-File Manifest Packing (`src/archive.rs`)** — Pack entire directory trees with relative paths, zip bomb defenses, path traversal protection, and per-file SHA-256 digests into a single sealed `SVLT` container (`svault pack-dir` / `svault unpack-dir`).
 - [x] **Time-Lock & Expiration Policy Headers (`src/policy.rs`)** — Authenticate `not_before` and `expires_at` UTC timestamps via ChaCha20-Poly1305 AEAD additional authenticated data (`aad`) with Howard Hinnant calendar conversions, ISO-8601 formatting/parsing, and temporal access policy enforcement (`--not-before`, `--expires-at`, `--expires-in`, `--at-time`).
 - [x] **Keyfile + Passphrase Two-Factor Derivation (`src/keyfile.rs`)** — Combine external hardware or USB keyfiles (`--keyfile <path>`) with user passphrases via streaming 64 KiB HMAC-SHA256 pre-hashing prior to Argon2id key derivation, supporting 2FA and keyfile-only modes with CSPRNG generation, SHA-256 fingerprinting, and Shannon entropy analysis.
+- [x] **Chunked Streaming Encryption for Multi-GB Files (`src/stream.rs`)** — 4 MiB authenticated chunk streaming with per-chunk nonce derivation (`SVST` v1 container) for constant $O(1)$ memory usage on large archives, Windows DPAPI stream key protection, policy time-lock/expiration enforcement, transparent CLI streaming (`svault stream`), and automatic streaming container detection.
 
 ---
 
@@ -25,7 +26,6 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 
 ### Archive & Container Management
 - [ ] **Hardware Security Token Hotplug Auto-Lock (`src/token_guard.rs`)** — Monitor USB/PnP security token insertion and removal events via Windows device notification routines to instantly trigger `zeroize` wiping on active memory keys and lock session state upon token detachment.
-- [ ] **Chunked Streaming Encryption for Multi-GB Files (`src/stream.rs`)** — 4 MiB authenticated chunk streaming with per-chunk nonce derivation for constant $O(1)$ memory usage on large archives.
 - [ ] **Container Re-Key & Passphrase Rotation (`svault rotate`)** — Atomically re-encrypt existing `.svault` or stego carriers with fresh salts, nonces, and updated passphrases.
 - [ ] **PKCS#11 Smartcard & YubiKey PIV Key Binding (`src/piv.rs`)** — Decrypt vaults using RSA/EC private keys stored on hardware security tokens via PKCS#11 / Windows PIV minidriver (`--piv-slot`).
 - [ ] **Detached Integrity Manifest & Canary Verification (`src/canary.rs`)** — Generate and verify signed SHA-256 tamper canaries across vault directories (`svault canary init` / `svault canary verify`).

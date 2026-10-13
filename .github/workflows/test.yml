@@ -19,7 +19,7 @@ jobs:
     name: Format, Clippy, Unit & Integration Tests
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

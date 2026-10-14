@@ -24,6 +24,7 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [x] **Unified Structured JSON Output Mode (`--json`) Across All Subcommands** — Machine-readable, structured JSON output across all subcommands (`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, and `keygen`) for programmatic scripting, pipeline chaining, and automated security audits, verified via dedicated domain integration tests (`tests/json_test.rs`).
 - [x] **Container Re-Key & Passphrase Rotation (`src/rotate.rs`)** — Atomically re-encrypt existing `.svault` containers or stego carriers (PNG, BMP, WAV, ASCII armor) with fresh 16-byte random salts and 12-byte nonces, DPAPI hardware binding toggle (`--dpapi`/`--no-dpapi`), temporal policy preservation or stripping (`--clear-policy`), and crash-resilient atomic file replacement (`svault rotate`).
 - [x] **Detached Integrity Manifest & Canary Verification (`src/canary.rs`)** — Generate and verify signed SHA-256 tamper canaries across vault directories (`svault canary init` / `svault canary verify`) with multi-carrier auto-detection, Argon2id + HMAC-SHA256 signature authentication, constant-time verification, and missing/modified/untracked anomaly reports.
+- [x] **Interactive In-Memory Vault Shell (`svault repl`)** — Unlock a key-value secret store once in memory and query, insert, remove, import, and export secrets interactively or via batch command execution without leaving plaintext artifacts on disk, with auto-expiring clipboard protection, read-only mode, and crash-resilient atomic re-encryption.
 
 ---
 
@@ -32,7 +33,6 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 ### Archive & Container Management
 - [ ] **Hardware Security Token Hotplug Auto-Lock (`src/token_guard.rs`)** — Monitor USB/PnP security token insertion and removal events via Windows device notification routines to instantly trigger `zeroize` wiping on active memory keys and lock session state upon token detachment.
 - [ ] **PKCS#11 Smartcard & YubiKey PIV Key Binding (`src/piv.rs`)** — Decrypt vaults using RSA/EC private keys stored on hardware security tokens via PKCS#11 / Windows PIV minidriver (`--piv-slot`).
-- [ ] **Interactive In-Memory Vault Shell (`svault repl`)** — Unlock a key-value secret store once in non-pageable memory and query or update entries interactively without touching disk in plaintext.
 
 ### Advanced Steganography & Covert Transports
 - [ ] **MP3 ID3v2 & Frame Padding Steganography (`src/mp3.rs`)** — Embed encrypted containers inside MPEG Audio Layer III files while preserving playback and stream CRC integrity (`svault embed-mp3` / `svault extract-mp3`).

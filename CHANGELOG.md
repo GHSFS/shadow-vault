@@ -5,6 +5,31 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-10-14
+
+### Added
+- Interactive In-Memory Terminal Vault Shell (`src/repl/`):
+  - Added `svault repl` (alias: `shell`) to unlock encrypted key-value secret containers once into memory, enabling operators to query, store, remove, import, and export secrets without touching disk in plaintext.
+  - Decomposed into clean modular architecture (`src/repl/store.rs`, `src/repl/command.rs`, `src/repl/mod.rs`), each well under the 500-line soft ceiling.
+  - Interactive Shell Commands:
+    - `list [filter]` (alias: `ls`): displays secret keys, tags, byte lengths, and update timestamps with optional keyword filtering.
+    - `get <key>`: queries secrets with masked preview by default, unmasked reveal (`--reveal`), raw string extraction (`--raw`), and auto-expiring clipboard protection (`--clip`, `--clip-ttl <sec>`).
+    - `set <key> <value>` (aliases: `add`, `put`): inserts or updates secret records in memory with optional organizational tags (`--tag`).
+    - `del <key>` (aliases: `rm`, `delete`): removes secret entries from the active session.
+    - `save` (aliases: `write`, `commit`): re-encrypts the in-memory store and atomically persists it to disk via temporary file rename.
+    - `status` (alias: `info`): inspects active session state, uptime, command counter, dirty modification flag, DPAPI binding, and vault path.
+    - `export <path>`: exports key-value entries to formatted JSON or raw key-value mapping (`--raw`).
+    - `import <path>`: imports secrets into the current session from structured JSON files.
+    - `clear` (alias: `cls`): clears terminal viewport.
+    - `exit` (aliases: `quit`, `q`): securely zeroizes sensitive in-memory buffers and quits, preventing accidental data loss if modified unless forced (`exit!`, `exit --force`).
+  - Non-interactive batch execution: executes single or semicolon-separated commands via `--exec "<cmd>; <cmd>"` or standard input piping (`stdin`).
+  - Read-only auditing mode (`--readonly`): strictly prohibits mutations (`set`, `del`, `save`, `import`) for secure auditing and read-only extraction.
+  - Automatic session saving (`--auto-save`): automatically re-encrypts dirty vaults upon session termination.
+  - Structured machine-readable JSON output mode (`--json`) across all REPL commands and status reports.
+  - Memory hardening: implements `Zeroize` on `SecretEntry` and `KeyValueVault` to ensure compiler-fenced zeroization of plaintext values on drop.
+- Dedicated Domain Integration Test Suite (`tests/repl_test.rs`):
+  - 9 comprehensive integration tests covering in-memory CRUD operations, atomic save & reload integrity, read-only mode protection, piped standard input scripting, status inspection and JSON mode, JSON export and import, wrong passphrase failure rejection, keyfile 2FA integration, and masked vs reveal previews (100% pass, 382 lines).
+
 ## [0.19.0] - 2026-10-13
 
 ### Added

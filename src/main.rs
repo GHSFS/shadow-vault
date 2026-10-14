@@ -17,6 +17,7 @@ mod guard;
 mod keyfile;
 mod passgen;
 mod policy;
+mod repl;
 mod rotate;
 mod shamir;
 mod shred;
@@ -2393,6 +2394,27 @@ fn main() -> Result<()> {
                 }
             }
         },
+        Commands::Repl {
+            vault,
+            passphrase,
+            keyfile,
+            dpapi,
+            readonly,
+            exec,
+            auto_save,
+            json,
+        } => {
+            let config = repl::ReplConfig {
+                vault_path: vault,
+                passphrase,
+                keyfile,
+                dpapi,
+                readonly,
+                auto_save,
+                json,
+            };
+            repl::run_cli(config, exec)?;
+        }
     }
 
     Ok(())

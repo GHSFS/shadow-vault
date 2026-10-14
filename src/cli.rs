@@ -1025,6 +1025,42 @@ pub enum Commands {
         #[command(subcommand)]
         action: CanaryAction,
     },
+
+    /// Interactive in-memory terminal vault shell for key-value secrets
+    #[command(name = "repl", visible_alias = "shell")]
+    Repl {
+        /// Path to encrypted .svault key-value container (opens existing or creates new)
+        #[arg(short = 'v', long = "vault", default_value = "vault.svault")]
+        vault: PathBuf,
+
+        /// Decryption/encryption passphrase
+        #[arg(short, long)]
+        passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only authentication
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
+        /// Bind container to current Windows user/machine via DPAPI
+        #[arg(long)]
+        dpapi: bool,
+
+        /// Open session in read-only mode (prohibits set, del, save)
+        #[arg(long)]
+        readonly: bool,
+
+        /// Execute command string (single or semicolon-separated) and exit immediately
+        #[arg(short = 'e', long = "exec")]
+        exec: Option<String>,
+
+        /// Automatically save modifications back to encrypted vault upon exit
+        #[arg(long = "auto-save")]
+        auto_save: bool,
+
+        /// Output operation results in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

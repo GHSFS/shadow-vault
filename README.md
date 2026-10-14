@@ -132,6 +132,7 @@
   - **Deterministic Seed Derivation (`--seed`, `--context`)**: derives reproducible passphrases from a master seed and service context using HMAC-SHA256, allowing operators to deterministically regenerate credentials.
   - **Entropy Rating & Vulnerability Assessment (`--entropy`)**: classifies keyspace entropy across five tiers (Weak to Military Grade), computes Shannon entropy, and estimates crack times across online, Argon2id, and GPU threat models.
   - **Auto-Expiring Clipboard Guard (`--clip`, `--clip-ttl`)**: copies secrets directly to system clipboard with memory auto-wiping and Windows clipboard history suppression.
+- **Interactive Terminal Vault Shell (`repl` / `shell`)** — in-memory Read-Eval-Print Loop for key-value secrets: unlocks containers once into memory, supports `get`, `set`, `del`, `list`, `export`, and `import` without writing plaintext to disk, with auto-expiring clipboard integration (`--clip`), read-only auditing (`--readonly`), batch command execution (`--exec`), and crash-resilient atomic re-encryption.
 - **3-Pass Secure File Shredder (`shred`)** — overwrites sensitive plaintext files with `0x00`, `0xFF`, and CSPRNG random bytes before unlinking.
 - **Single Static Binary** — compiled with `+crt-static`, `opt-level = "z"`, LTO, and stripped symbols. Zero external runtime dependencies.
 
@@ -366,6 +367,19 @@ svault canary init -d ./vaults -p "canary-auth-secret" --json
 # 59. Verify canary integrity against on-disk files
 svault canary verify -d ./vaults
 svault canary verify -d ./vaults -p "canary-auth-secret" --strict --json
+
+# 60. Launch interactive in-memory key-value vault shell
+svault repl -v myvault.svault -p "session-pass"
+
+# 61. Execute batch REPL commands non-interactively via --exec
+svault repl -v myvault.svault -p "session-pass" --exec "set api_key sk_live_xyz --tag prod; set db_pass secret; save"
+
+# 62. Query a secret directly with auto-expiring clipboard protection
+svault repl -v myvault.svault -p "session-pass" --exec "get api_key --clip --clip-ttl 15"
+
+# 63. Open REPL in read-only mode or export key-value entries to JSON
+svault repl -v myvault.svault -p "session-pass" --readonly --exec "list" --json
+svault repl -v myvault.svault -p "session-pass" --exec "export ./backup.json; exit"
 ```
 
 ### License & Attribution
@@ -475,6 +489,7 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
   - **청크 논스 및 AAD 암호학적 결합**: 청크마다 고유 논스를 유도하여 IV 재사용을 방지하고, AAD에 청크 인덱스, 태그(중간/종료), 솔트, 정책 해시를 바인딩하여 순서 변경, 누락, 주입 공격을 원천 방어.
   - **전체 파일 메모리 적재 제로(Zero)**: 2개 버퍼 슬라이딩 윈도우로 0바이트부터 수십 기가바이트 파일까지 메모리 고갈 없이 고속 처리.
   - **투명한 자동 감지**: `svault decrypt` 및 `svault inspect`가 스트리밍 컨테이너를 자동 인식하여 스트리밍 엔진으로 즉시 분기.
+- **대화형 인메모리 금고 셸 (`repl` / `shell`)** — 단 한 번의 복호화로 키-값 비밀 저장소를 메모리에 적재하여 디스크 평문 저장 없이 안전하게 조회, 추가, 삭제, 내보내기, 가져오기를 수행하는 대화형 REPL 셸: 자동 소거 클립보드 보호(`--clip`), 읽기 전용 감사 모드(`--readonly`), 비대화형 배치 실행(`--exec`), 무중단 원자적 재암호화 저장 지원.
 - **다중 패스 완전 파쇄 (`shred`)** — 원본 평문 파일을 삭제할 때 `0x00` ➔ `0xFF` ➔ 난수 덮어쓰기 후 디스크 동기화 및 길이 0 절삭을 수행해 포렌식 복구를 차단합니다.
 
 ### 사용법 요약
@@ -679,6 +694,19 @@ svault canary init -d ./vaults -p "카나리비밀번호" --json
 # 54. 디렉터리 카나리 무결성 및 변조 검증
 svault canary verify -d ./vaults
 svault canary verify -d ./vaults -p "카나리비밀번호" --strict --json
+
+# 55. 대화형 인메모리 키-값 금고 셸 구동
+svault repl -v myvault.svault -p "금고비밀번호"
+
+# 56. 비대화형 배치 명령 즉각 실행 (--exec)
+svault repl -v myvault.svault -p "금고비밀번호" --exec "set api_key secret_value --tag prod; set db_pass hunter2; save"
+
+# 57. 비밀번호 조회 시 자동 소거 클립보드에 직접 복사
+svault repl -v myvault.svault -p "금고비밀번호" --exec "get api_key --clip --clip-ttl 15"
+
+# 58. 읽기 전용 감사 모드 및 JSON 내보내기
+svault repl -v myvault.svault -p "금고비밀번호" --readonly --exec "list" --json
+svault repl -v myvault.svault -p "금고비밀번호" --exec "export ./backup.json; exit"
 ```
 
 ### 저작권 및 라이선스

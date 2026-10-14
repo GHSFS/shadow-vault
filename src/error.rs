@@ -31,4 +31,7 @@ pub enum Error {
 
     #[error("canary integrity error: {0}")]
     Canary(String),
+
+    #[error("repl error: {0}")]
+    Repl(String),
 }

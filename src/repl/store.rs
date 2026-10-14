@@ -205,6 +205,10 @@ impl KeyValueVault {
             wav::extract_from_wav(&raw, wav::ExtractWavMode::Auto)?
         } else if raw.starts_with(b"BM") {
             bmp::extract_from_bmp(&raw)?
+        } else if raw.starts_with(b"ID3")
+            || (raw.len() >= 2 && raw[0] == 0xFF && (raw[1] & 0xE0) == 0xE0)
+        {
+            crate::mp3::extract_from_mp3(&raw, crate::mp3::ExtractMp3Mode::Auto)?
         } else {
             raw
         };

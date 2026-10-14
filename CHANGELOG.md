@@ -5,6 +5,27 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-10-14
+
+### Added
+- MP3 ID3v2 & Audio Frame Steganography Engine (`src/mp3/`):
+  - Added `svault embed-mp3` (alias: `hide-mp3`) and `svault extract-mp3` (alias: `unhide-mp3`) for zero-trust steganographic storage inside MPEG Audio Layer III files.
+  - Decomposed into modular architecture (`src/mp3/id3v2.rs`, `src/mp3/frame.rs`, `src/mp3/mod.rs`), each strictly under 340 lines.
+  - Dual Steganography Modes:
+    - `id3v2` mode (`--mode id3v2`): Conceals encrypted payload within an ID3v2.3 / ID3v2.4 private (`PRIV`) frame with owner identifier `ShadowVault\0`, magic `svLt`, payload length, and CRC-32 integrity checksum. Handles 28-bit syncsafe integers, strips previous ShadowVault frames for idempotent re-embedding, and preserves all existing metadata tags (e.g. TIT2 title, TPE1 artist, TALB album, APIC cover art).
+    - `frame` mode (`--mode frame` / `--frame`): Embeds payload into inter-frame padding between MPEG Audio Layer III frames with 0xFFE/0xFFF syncword validation, layer III bit verification, frame length calculation from bitrates/sampling rates/padding bits, and CRC-32 checksums.
+    - `auto` extraction mode (`--mode auto`, default): Automatically probes ID3v2 PRIV frames first and falls back to MPEG audio frames with immediate error reporting on carrier corruption or CRC mismatch.
+  - Carrier Storage Capacity Estimation:
+    - Wired `svault capacity <carrier>` to inspect MP3 files, reporting MPEG version, layer, bitrate, sample rate, channel mode, frame count, total audio bytes, and ID3v2 metadata presence with structured `--json` mode.
+  - Ecosystem Integration:
+    - Added transparent MP3 carrier rotation (`svault rotate`) in `src/rotate.rs`.
+    - Added MP3 format and stego detection in `src/canary.rs` (`detect_carrier_format`).
+    - Added transparent MP3 secret extraction in in-memory terminal vault shell (`src/repl/store.rs`).
+    - Added MP3 carrier support to directory packaging and unpacking (`pack-dir` / `unpack-dir`) and container inspection (`inspect`).
+  - Plausible deniability decoy container embedding (`--decoy`, `--decoy-passphrase`) and zeroize wiping of sensitive passphrase buffers.
+- Dedicated Domain Integration Test Suite (`tests/mp3_test.rs`):
+  - 8 comprehensive integration tests covering ID3v2 PRIV roundtrips, inter-frame padding embedding, auto-detection mode, decoy plausible deniability, ID3 tag metadata preservation, CRC-32 tamper rejection, DPAPI hardware binding with policy time-locks, and CLI `--json` outputs (100% pass, 674 lines).
+
 ## [0.20.0] - 2026-10-14
 
 ### Added

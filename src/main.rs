@@ -15,6 +15,7 @@ mod diff;
 mod error;
 mod guard;
 mod keyfile;
+mod mp3;
 mod passgen;
 mod policy;
 mod repl;
@@ -1050,6 +1051,244 @@ fn main() -> Result<()> {
             plain.zeroize();
         }
 
+        Commands::EmbedMp3 {
+            carrier,
+            secret,
+            output,
+            mut passphrase,
+            keyfile,
+            mode,
+            frame,
+            decoy,
+            mut decoy_passphrase,
+            padding,
+            dpapi,
+            not_before,
+            expires_at,
+            expires_in,
+            policy_desc,
+            json,
+        } => {
+            let mp3_bytes = fs::read(&carrier)
+                .with_context(|| format!("failed to read carrier MP3: {}", carrier.display()))?;
+            let raw_secret = fs::read(&secret)
+                .with_context(|| format!("failed to read secret file: {}", secret.display()))?;
+            let policy = parse_cli_policy(
+                not_before.as_deref(),
+                expires_at.as_deref(),
+                expires_in.as_deref(),
+                policy_desc.as_deref(),
+            )?;
+            let sealed = if let Some(decoy_path) = decoy {
+                let d_pass = decoy_passphrase.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("--decoy-passphrase is required when --decoy is specified")
+                })?;
+                let raw_decoy = fs::read(&decoy_path).with_context(|| {
+                    format!("failed to read decoy file: {}", decoy_path.display())
+                })?;
+                decoy::seal_decoy_with_keyfile(
+                    &raw_secret,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    &raw_decoy,
+                    d_pass,
+                    dpapi,
+                    padding,
+                )?
+            } else if padding > 0 {
+                decoy::seal_v2_with_keyfile(
+                    &raw_secret,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    padding,
+                )?
+            } else {
+                crypto::seal_with_policy_and_keyfile(
+                    &raw_secret,
+                    passphrase.as_deref(),
+                    keyfile.as_deref(),
+                    dpapi,
+                    policy.as_ref(),
+                )?
+            };
+            if let Some(ref mut p) = passphrase {
+                p.zeroize();
+            }
+            if let Some(ref mut dp) = decoy_passphrase {
+                dp.zeroize();
+            }
+            let effective_mode = if frame { mp3::Mp3Mode::Frame } else { mode };
+            let stego_mp3 = mp3::embed_in_mp3(&mp3_bytes, &sealed, effective_mode)?;
+            fs::write(&output, &stego_mp3)
+                .with_context(|| format!("failed to write stego MP3: {}", output.display()))?;
+            if json {
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "embed-mp3",
+                    "carrier": carrier.display().to_string(),
+                    "secret": secret.display().to_string(),
+                    "output": output.display().to_string(),
+                    "secret_bytes": raw_secret.len(),
+                    "stego_bytes": stego_mp3.len(),
+                    "carrier_type": "mp3",
+                    "mode": effective_mode.to_string(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!(
+                    "{} embedded {} bytes into {} (mode: {})",
+                    "ok".green().bold(),
+                    raw_secret.len(),
+                    output.display(),
+                    effective_mode
+                );
+            }
+        }
+
+        Commands::ExtractMp3 {
+            carrier,
+            output,
+            mut passphrase,
+            keyfile,
+            mut decoy_passphrase,
+            mode,
+            frame,
+            clip,
+            clip_ttl,
+            at_time,
+            json,
+        } => {
+            let mp3_bytes = fs::read(&carrier)
+                .with_context(|| format!("failed to read stego MP3: {}", carrier.display()))?;
+            let at_time_val = parse_cli_at_time(at_time.as_deref())?;
+            check_guard_preflight(&carrier, at_time_val)?;
+
+            let extract_res: Result<Vec<u8>> = (|| {
+                let effective_mode = if frame {
+                    mp3::ExtractMp3Mode::Frame
+                } else {
+                    mode
+                };
+                let sealed = mp3::extract_from_mp3(&mp3_bytes, effective_mode)?;
+                if let Some(ref d_pass) = decoy_passphrase {
+                    if crypto::is_decoy_container(&sealed) {
+                        Ok(decoy::open_decoy_explicit_with_keyfile(
+                            &sealed,
+                            passphrase.as_deref(),
+                            keyfile.as_deref(),
+                            Some(d_pass),
+                        )?)
+                    } else {
+                        Ok(crypto::open_at_with_keyfile(
+                            &sealed,
+                            Some(d_pass),
+                            keyfile.as_deref(),
+                            at_time_val,
+                        )?)
+                    }
+                } else if crypto::is_decoy_container(&sealed) {
+                    Ok(decoy::open_decoy_explicit_with_keyfile(
+                        &sealed,
+                        passphrase.as_deref(),
+                        keyfile.as_deref(),
+                        None,
+                    )?)
+                } else if passphrase.is_some() || keyfile.is_some() {
+                    Ok(crypto::open_at_with_keyfile(
+                        &sealed,
+                        passphrase.as_deref(),
+                        keyfile.as_deref(),
+                        at_time_val,
+                    )?)
+                } else {
+                    anyhow::bail!(
+                        "either --passphrase, --keyfile, or --decoy-passphrase must be provided"
+                    );
+                }
+            })();
+
+            if let Some(ref mut p) = passphrase {
+                p.zeroize();
+            }
+            if let Some(ref mut dp) = decoy_passphrase {
+                dp.zeroize();
+            }
+
+            let mut plain = match extract_res {
+                Ok(data) => {
+                    let _ = guard::record_success(&carrier, at_time_val);
+                    data
+                }
+                Err(err) => {
+                    handle_guard_post_failure(&carrier, at_time_val)?;
+                    return Err(err);
+                }
+            };
+            if let Some(ref out_path) = output {
+                fs::write(out_path, &plain).with_context(|| {
+                    format!("failed to write extracted file: {}", out_path.display())
+                })?;
+                if json {
+                    let out = serde_json::json!({
+                        "status": "ok",
+                        "command": "extract-mp3",
+                        "carrier": carrier.display().to_string(),
+                        "output": out_path.display().to_string(),
+                        "extracted_bytes": plain.len(),
+                        "carrier_type": "mp3",
+                        "mode": (if frame { mp3::ExtractMp3Mode::Frame } else { mode }).to_string(),
+                        "clipboard_guarded": clip,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!(
+                        "{} extracted {} bytes -> {}",
+                        "ok".green().bold(),
+                        plain.len(),
+                        out_path.display()
+                    );
+                }
+            } else if json {
+                let is_utf8 = std::str::from_utf8(&plain).is_ok();
+                let out = serde_json::json!({
+                    "status": "ok",
+                    "command": "extract-mp3",
+                    "carrier": carrier.display().to_string(),
+                    "output": null,
+                    "extracted_bytes": plain.len(),
+                    "utf8_text": if is_utf8 { std::str::from_utf8(&plain).ok() } else { None },
+                    "carrier_type": "mp3",
+                    "mode": (if frame { mp3::ExtractMp3Mode::Frame } else { mode }).to_string(),
+                    "clipboard_guarded": clip,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if !clip {
+                anyhow::bail!("either --output, --clip, or --json must be provided");
+            }
+            if clip {
+                match std::str::from_utf8(&plain) {
+                    Ok(text) => {
+                        let _ = clipboard_guard::guard_interactive(
+                            text,
+                            clip_ttl,
+                            Some("extracted secret"),
+                        )?;
+                    }
+                    Err(_) => {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&plain);
+                        let _ = clipboard_guard::guard_interactive(
+                            &b64,
+                            clip_ttl,
+                            Some("extracted binary (base64)"),
+                        )?;
+                    }
+                }
+            }
+            plain.zeroize();
+        }
+
         Commands::EmbedBmp {
             carrier,
             secret,
@@ -1378,6 +1617,53 @@ fn main() -> Result<()> {
                     );
                     println!("  Max Chunk Size:        2,147,483,647 bytes");
                 }
+            } else if raw_bytes.starts_with(b"ID3")
+                || (raw_bytes.len() >= 2 && raw_bytes[0] == 0xFF && (raw_bytes[1] & 0xE0) == 0xE0)
+            {
+                let cap = mp3::get_mp3_capacity(&raw_bytes)?;
+                if json {
+                    let out = serde_json::json!({
+                        "carrier": carrier.display().to_string(),
+                        "carrier_type": "mp3",
+                        "mpeg_version": cap.mpeg_version,
+                        "layer": cap.layer,
+                        "bitrate_kbps": cap.bitrate_kbps,
+                        "sample_rate": cap.sample_rate,
+                        "channel_mode": cap.channel_mode,
+                        "num_frames": cap.num_frames,
+                        "total_audio_bytes": cap.total_audio_bytes,
+                        "id3v2_present": cap.id3v2_present,
+                        "id3v2_version": cap.id3v2_version,
+                        "id3v2_max_payload_bytes": cap.id3v2_max_payload_bytes,
+                        "frame_mode_supported": cap.frame_mode_supported,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&out)?);
+                } else {
+                    println!("{}", "=== [CARRIER CAPACITY] ===".bold());
+                    println!("  Target File:           {}", carrier.display());
+                    println!("  Carrier Type:          MPEG Audio Layer III (MP3) Carrier");
+                    println!(
+                        "  Format:                {} {} ({} kbps, {} Hz, {})",
+                        cap.mpeg_version,
+                        cap.layer,
+                        cap.bitrate_kbps,
+                        cap.sample_rate,
+                        cap.channel_mode
+                    );
+                    println!(
+                        "  MPEG Frames:           {} frames ({} audio bytes)",
+                        cap.num_frames, cap.total_audio_bytes
+                    );
+                    println!(
+                        "  ID3v2 Metadata:        {} (version: {})",
+                        if cap.id3v2_present { "Present" } else { "None" },
+                        cap.id3v2_version.as_deref().unwrap_or("none")
+                    );
+                    println!("  Mode: ID3v2 Capacity:  Lossless PRIV tag frame (up to 256 MiB)");
+                    println!(
+                        "  Mode: Frame Capacity:  Inter-frame stego packet with CRC-32 (up to 2 GiB)"
+                    );
+                }
             } else {
                 anyhow::bail!(
                     "unsupported carrier format for capacity estimation: {}",
@@ -1478,6 +1764,14 @@ fn main() -> Result<()> {
                 )
             } else if raw.starts_with(b"BM") {
                 ("bmp", bmp::extract_from_bmp(&raw)?, None)
+            } else if raw.starts_with(b"ID3")
+                || (raw.len() >= 2 && raw[0] == 0xFF && (raw[1] & 0xE0) == 0xE0)
+            {
+                (
+                    "mp3",
+                    mp3::extract_from_mp3(&raw, mp3::ExtractMp3Mode::Auto)?,
+                    None,
+                )
             } else {
                 ("vault", raw, None)
             };
@@ -3133,9 +3427,15 @@ fn handle_pack_dir_command(
             wav::embed_in_wav(&carrier_bytes, &sealed, wav::WavMode::Chunk)?
         } else if carrier_bytes.starts_with(b"BM") {
             bmp::embed_in_bmp(&carrier_bytes, &sealed)?
+        } else if carrier_bytes.starts_with(b"ID3")
+            || (carrier_bytes.len() >= 2
+                && carrier_bytes[0] == 0xFF
+                && (carrier_bytes[1] & 0xE0) == 0xE0)
+        {
+            mp3::embed_in_mp3(&carrier_bytes, &sealed, mp3::Mp3Mode::Id3v2)?
         } else {
             anyhow::bail!(
-                "unsupported carrier format: {} (expected PNG, WAV, or BMP)",
+                "unsupported carrier format: {} (expected PNG, WAV, BMP, or MP3)",
                 carrier_path.display()
             );
         };
@@ -3204,6 +3504,10 @@ fn handle_unpack_dir_command(
         wav::extract_from_wav(&raw_bytes, wav::ExtractWavMode::Auto)?
     } else if raw_bytes.starts_with(b"BM") {
         bmp::extract_from_bmp(&raw_bytes)?
+    } else if raw_bytes.starts_with(b"ID3")
+        || (raw_bytes.len() >= 2 && raw_bytes[0] == 0xFF && (raw_bytes[1] & 0xE0) == 0xE0)
+    {
+        mp3::extract_from_mp3(&raw_bytes, mp3::ExtractMp3Mode::Auto)?
     } else {
         raw_bytes
     };

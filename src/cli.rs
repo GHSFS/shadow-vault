@@ -435,6 +435,122 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Encrypt and hide a secret file inside an MP3 audio carrier (ID3v2 or inter-frame)
+    #[command(name = "embed-mp3", visible_alias = "hide-mp3")]
+    EmbedMp3 {
+        /// Carrier MP3 audio path
+        #[arg(short, long)]
+        carrier: PathBuf,
+
+        /// Secret file to encrypt and embed
+        #[arg(short, long)]
+        secret: PathBuf,
+
+        /// Output stego MP3 audio path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Encryption passphrase
+        #[arg(short, long, required_unless_present = "keyfile")]
+        passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only encryption
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
+        /// Steganography mode (id3v2 or frame)
+        #[arg(short, long, value_enum, default_value_t = crate::mp3::Mp3Mode::Id3v2)]
+        mode: crate::mp3::Mp3Mode,
+
+        /// Use inter-frame steganography mode (shorthand for --mode frame)
+        #[arg(long)]
+        frame: bool,
+
+        /// Optional decoy file to create a plausible deniability container
+        #[arg(short = 'd', long = "decoy", requires = "decoy_passphrase")]
+        decoy: Option<PathBuf>,
+
+        /// Decoy passphrase when --decoy is specified
+        #[arg(long = "decoy-passphrase", requires = "decoy")]
+        decoy_passphrase: Option<String>,
+
+        /// Explicit random padding bytes for size obfuscation
+        #[arg(long, default_value_t = 0)]
+        padding: usize,
+
+        /// Bind hidden payload to the current Windows user/machine via DPAPI
+        #[arg(long)]
+        dpapi: bool,
+
+        /// Time-lock activation timestamp or relative offset (e.g. "2026-10-15T00:00:00Z", "+1h")
+        #[arg(long = "not-before")]
+        not_before: Option<String>,
+
+        /// Expiration timestamp after which decryption is refused (e.g. "2026-12-31T23:59:59Z")
+        #[arg(long = "expires-at")]
+        expires_at: Option<String>,
+
+        /// Expiration duration from now (e.g. "24h", "7d", "30d", "3600s")
+        #[arg(long = "expires-in")]
+        expires_in: Option<String>,
+
+        /// Optional descriptive label or policy comment
+        #[arg(long = "policy-desc")]
+        policy_desc: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Extract and decrypt a secret file from a stego MP3 audio file
+    #[command(name = "extract-mp3", visible_alias = "unhide-mp3")]
+    ExtractMp3 {
+        /// Input stego MP3 audio path
+        #[arg(short, long)]
+        carrier: PathBuf,
+
+        /// Output file path for extracted secret (optional when --clip is provided)
+        #[arg(short, long, required_unless_present = "clip")]
+        output: Option<PathBuf>,
+
+        /// Decryption passphrase (unlocks either primary or decoy automatically)
+        #[arg(short, long)]
+        passphrase: Option<String>,
+
+        /// Optional external keyfile for 2FA or keyfile-only extraction
+        #[arg(short = 'k', long = "keyfile")]
+        keyfile: Option<PathBuf>,
+
+        /// Explicit decoy passphrase
+        #[arg(long = "decoy-passphrase")]
+        decoy_passphrase: Option<String>,
+
+        /// Steganography mode (auto, id3v2, or frame)
+        #[arg(short, long, value_enum, default_value_t = crate::mp3::ExtractMp3Mode::Auto)]
+        mode: crate::mp3::ExtractMp3Mode,
+
+        /// Use inter-frame steganography mode (shorthand for --mode frame)
+        #[arg(long)]
+        frame: bool,
+
+        /// Copy decrypted plaintext to Windows clipboard with auto-expiring guard
+        #[arg(long)]
+        clip: bool,
+
+        /// Auto-expiring clipboard time-to-live in seconds (default: 15)
+        #[arg(long = "clip-ttl", default_value_t = 15)]
+        clip_ttl: u64,
+
+        /// Optional simulated reference UTC timestamp for policy validation
+        #[arg(long = "at-time")]
+        at_time: Option<String>,
+
+        /// Output operation summary in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Encrypt and hide a secret file inside a 24-bit uncompressed BMP carrier image
     #[command(name = "embed-bmp", visible_alias = "hide-bmp")]
     EmbedBmp {
@@ -538,7 +654,7 @@ pub enum Commands {
     /// Estimate and display steganographic data storage capacity for a carrier file
     #[command(name = "capacity", visible_alias = "cap")]
     Capacity {
-        /// Carrier file path (.bmp, .wav, or .png)
+        /// Carrier file path (.bmp, .wav, .png, or .mp3)
         #[arg(value_name = "CARRIER")]
         carrier: PathBuf,
 
@@ -549,7 +665,7 @@ pub enum Commands {
 
     /// Inspect a .svault container or stego carrier header without decrypting
     Inspect {
-        /// Target .svault, .png, .wav, or .bmp file
+        /// Target .svault, .png, .wav, .bmp, or .mp3 file
         input: PathBuf,
 
         /// Output inspection report in structured JSON format

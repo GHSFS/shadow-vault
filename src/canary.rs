@@ -193,6 +193,15 @@ pub fn detect_carrier_format(path: &Path) -> Result<String> {
             }
         }
         Ok("wav".into())
+    } else if prefix.starts_with(b"ID3")
+        || (prefix.len() >= 2 && prefix[0] == 0xFF && (prefix[1] & 0xE0) == 0xE0)
+    {
+        if let Ok(bytes) = fs::read(path) {
+            if crate::mp3::extract_from_mp3(&bytes, crate::mp3::ExtractMp3Mode::Auto).is_ok() {
+                return Ok("mp3_stego".into());
+            }
+        }
+        Ok("mp3".into())
     } else if prefix.starts_with(b"-----BEGIN SHADOW VAULT SHARE-----")
         || prefix.starts_with(b"SVLT-S1-")
     {
@@ -203,6 +212,7 @@ pub fn detect_carrier_format(path: &Path) -> Result<String> {
             "png" => Ok("png".into()),
             "bmp" => Ok("bmp".into()),
             "wav" => Ok("wav".into()),
+            "mp3" => Ok("mp3".into()),
             "asc" => Ok("armor_asc".into()),
             "share" => Ok("shamir_share".into()),
             _ => Ok("file".into()),

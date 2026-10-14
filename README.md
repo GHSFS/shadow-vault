@@ -23,7 +23,8 @@
    - **PNG Images** — injects an `svLt` private ancillary chunk before `IEND` with valid IEEE 802.3 CRC-32 checksums.
    - **WAV Audio Files** — supports both RIFF/WAVE subchunk (`svLt`) and 16-bit PCM audio sample Least Significant Bit (LSB) replacement with CRC-32 validation.
    - **BMP Images (`src/bmp.rs`)** — modulates least significant bits (LSB) across 24-bit uncompressed RGB pixel channels with strict 4-byte row padding preservation and 12-byte tamper-resistant stego envelope (`svLt` magic, length, payload, CRC-32).
-4. **Universal Carrier Capacity Estimation (`capacity`)** — calculates total and usable byte capacity across steganography carrier files (`.bmp`, `.wav`, `.png`) with optional JSON output (`svault capacity <carrier> [--json]`).
+   - **MP3 Audio Files (`src/mp3/`)** — conceals encrypted payloads inside ID3v2.3/ID3v2.4 private (`PRIV`) tag frames or MPEG Audio Layer III inter-frame padding with frame sync validation, metadata preservation (TIT2, TPE1), CRC-32 integrity checking, and capacity estimation (`svault embed-mp3` / `svault extract-mp3`).
+4. **Universal Carrier Capacity Estimation (`capacity`)** — calculates total and usable byte capacity across steganography carrier files (`.bmp`, `.wav`, `.png`, `.mp3`) with optional JSON output (`svault capacity <carrier> [--json]`).
 5. **Shamir's Secret Sharing (`M-of-N` Key Splitting, `src/shamir.rs`)** — mathematically provable information-theoretic secret sharing over $\text{GF}(256)$ with constant-time arithmetic. Split master recovery keys, passphrases, or `.svault` containers into $N$ shares requiring any $M$ shares to reconstruct (`svault split` / `svault combine`).
 6. **Passphrase Strength & Carrier Entropy Auditor (`src/audit.rs`)** — evaluates passphrase resiliency via Shannon entropy bits-per-byte, character pool diversity, and predictive vulnerability pattern detection (repeated characters, ascending/descending sequences, keyboard walks, leetspeak dictionary matching). Audits steganography carriers (PNG chunks, WAV RIFF/LSB streams, 24-bit BMP pixel LSB) and encrypted `.svault` containers for anomalies and tampering (`svault audit <target>` / `svault audit -p <passphrase>`).
 7. **RFC 6238 TOTP 2FA Vault (`src/totp.rs`)** — zero-dependency encrypted local two-factor authentication secret store sealed inside `.svault` containers. Features RFC 4648 Base32 codec, self-contained RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1/256/512), dynamic truncation, `otpauth://totp/...` URI parser/serializer, constant-time verification against timing attacks, and terminal visual countdown progress bar (`svault totp add`, `svault totp code`, `svault totp list`, `svault totp verify`).
@@ -35,10 +36,11 @@
 13. **Stego Carrier Visual & Statistical Diff Report (`src/diff.rs`)** — evaluates visual signal distortion (MSE, PSNR, MAE, pure LSB vs non-LSB flips), audio sample SNR/PSNR metrics, structural chunk table alignment, and information-theoretic divergence (Shannon entropy delta, total variation distance) between original and stego-bearing carrier files (`svault compare <original> <stego>`).
 14. **Dead-Man's Switch & Maximum Attempt Self-Shred Guard (`src/guard.rs`)** — binds containers and carriers to a tamper-resistant attempt ledger (`.guard` companion or centralized stealth ledger). Automatically triggers multi-pass cryptographic shredding via `shred_file` if $K$ consecutive incorrect passphrase attempts occur or if an inactivity dead-man switch lapses without check-in (`svault guard arm`, `svault guard status`, `svault guard checkin`, `svault guard reset`, `svault guard trigger`).
 15. **Deterministic & CSPRNG Passphrase Generator (`src/passgen/`)** — BIP-39 2,048-word Diceware recovery generator, character/symbol generator with visual ambiguity elimination (`--exclude-ambiguous`), raw CSPRNG byte tokens in Hex, Base64, and Base32 (`--bytes`), numeric PIN generation, master seed deterministic derivation (`--seed`, `--context`), multi-candidate generation, keyspace and empirical Shannon entropy evaluation with 5-tier resilience ratings, and auto-expiring clipboard guard integration (`svault keygen`).
-16. **Unified Structured JSON Output Mode (`--json`)** — outputs clean, machine-readable JSON across all subcommands (`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, `keygen`, `rotate`, `canary`) with consistent status, operation metrics, payload sizes, and cryptographic fingerprints for shell pipelines and CI/CD automation.
-17. **Container Re-Key & Passphrase Rotation (`rotate`, `src/rotate.rs`)** — re-encrypts `.svault` containers and stego carriers (PNG, BMP, WAV, ASCII armor) with fresh CSPRNG salt and nonce, new passphrases or keyfiles, optional Windows DPAPI hardware binding toggles (`--dpapi`/`--no-dpapi`), temporal policy preservation or stripping (`--clear-policy`), and crash-resilient atomic file replacement (`svault rotate`).
+16. **Unified Structured JSON Output Mode (`--json`)** — outputs clean, machine-readable JSON across all subcommands (`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `embed-mp3`, `extract-mp3`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, `keygen`, `rotate`, `canary`) with consistent status, operation metrics, payload sizes, and cryptographic fingerprints for shell pipelines and CI/CD automation.
+17. **Container Re-Key & Passphrase Rotation (`rotate`, `src/rotate.rs`)** — re-encrypts `.svault` containers and stego carriers (PNG, BMP, WAV, MP3, ASCII armor) with fresh CSPRNG salt and nonce, new passphrases or keyfiles, optional Windows DPAPI hardware binding toggles (`--dpapi`/`--no-dpapi`), temporal policy preservation or stripping (`--clear-policy`), and crash-resilient atomic file replacement (`svault rotate`).
 18. **Detached Integrity Manifest & Canary Verification (`canary`, `src/canary.rs`)** — generates and verifies signed SHA-256 tamper canaries across directory trees of vaults and carriers (`svault canary init` / `svault canary verify`). Features multi-carrier format detection, optional Argon2id + HMAC-SHA256 signature authentication, constant-time verification, missing/modified/untracked anomaly reports, and machine-readable JSON output.
-19. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
+19. **MP3 ID3v2 & Audio Frame Steganography Engine (`src/mp3/`)** — provides robust steganographic embedding inside MPEG Audio Layer III files with ID3v2 PRIV private tag frame embedding, MPEG inter-frame padding embedding, transparent auto-detection, decoy plausible deniability, and carrier capacity estimation (`svault embed-mp3` / `svault extract-mp3`).
+20. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
 ### Features
 
@@ -106,7 +108,7 @@
   - **Cryptographic 2FA & Keyfile-Only Modes**: 2FA derives key material via `HMAC-SHA256(key = passphrase, data = "shadow-vault:keyfile-v1:" || keyfile_stream)`, while keyfile-only derives via domain separator `b"shadow-vault:keyfile-only:v1"`, feeding a 256-bit high-entropy seed into Argon2id.
   - **CSPRNG Keyfile Generator (`svault keyfile generate`)**: creates cryptographically secure hardware keyfiles (default 64 bytes) via `rand::rngs::OsRng`.
   - **Keyfile Inspection & Fingerprint (`inspect` / `fingerprint`)**: computes SHA-256 fingerprints (`SHA256:<hex>`) and Shannon entropy quality ratings with sample-size normalization.
-  - **Universal Command Binding**: `--keyfile` / `-k` supported across `encrypt`, `decrypt`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `pack-dir`, `unpack-dir`, and decoy vaults.
+  - **Universal Command Binding**: `--keyfile` / `-k` supported across `encrypt`, `decrypt`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `embed-mp3`, `extract-mp3`, `pack-dir`, `unpack-dir`, and decoy vaults.
 - **Chunked Streaming Encryption (`stream`)** — constant $O(1)$ memory streaming authenticated encryption:
   - **`SVST` v1 Wire Format**: 38-byte base header (magic `SVST`, version 1, flags, chunk size, salt, base nonce) with optional `SVPO` policy header and DPAPI wrapped stream key.
   - **Chunk Nonce & AAD Derivation**: unique nonce per chunk preventing IV reuse; AAD incorporates chunk index, intermediate/final tag, salt, and policy hash to eliminate chunk reordering, truncation, or substitution.
@@ -181,15 +183,23 @@ svault embed-wav -c track.wav -s classified.txt -o track-lsb.wav -p "primary-sec
 # 8. Extract and decrypt secret from WAV audio file (auto-detects chunk or LSB)
 svault extract-wav -c track-lsb.wav -o restored-audio.txt -p "primary-secret-pass"
 
-# 9. Estimate carrier capacity for steganography embedding (.bmp, .wav, or .png)
+# 9. Estimate carrier capacity for steganography embedding (.bmp, .wav, .png, or .mp3)
 svault capacity landscape.bmp
 svault capacity track.wav --json
+svault capacity song.mp3
 
 # 10. Conceal secret inside a 24-bit BMP image via pixel LSB steganography
 svault embed-bmp -c landscape.bmp -s classified.txt -o landscape-stego.bmp -p "primary-secret-pass"
 
 # 11. Extract secret from BMP image directly to auto-expiring clipboard
 svault extract-bmp -c landscape-stego.bmp -p "primary-secret-pass" --clip --clip-ttl 15
+
+# 12. Conceal secret inside an MP3 audio file (ID3v2 PRIV tag or inter-frame padding)
+svault embed-mp3 -c song.mp3 -s classified.txt -o song-stego.mp3 -p "primary-secret-pass" --mode id3v2
+svault embed-mp3 -c song.mp3 -s classified.txt -o song-frame.mp3 -p "primary-secret-pass" --mode frame
+
+# 13. Extract secret from MP3 audio file (auto-detects ID3v2 or frame mode)
+svault extract-mp3 -c song-stego.mp3 -o restored-mp3.txt -p "primary-secret-pass"
 
 # 12. Securely shred the original plaintext file (3 passes)
 svault shred classified.txt --passes 3
@@ -250,7 +260,7 @@ svault audit secret.svault.asc --json
 # 28. Pack an entire directory tree into an encrypted .svault container
 svault pack-dir -i ./my_project -o project.svault -p "pack-passphrase" --list
 
-# 29. Pack into a stego carrier (PNG, WAV, BMP) or ASCII armor
+# 29. Pack into a stego carrier (PNG, WAV, BMP, MP3) or ASCII armor
 svault pack-dir -i ./my_project -o project.png -p "pack-passphrase" --carrier cover.png
 svault pack-dir -i ./my_project -o project.svault.asc -p "pack-passphrase" --armor
 
@@ -403,22 +413,24 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
    - **PNG 이미지 (`embed` / `extract`)**: 비표준 렌더링에 영향을 주지 않는 `svLt` 청크 + IEEE 802.3 CRC-32 무결성 검증 (미끼 금고 직접 은닉 지원).
    - **WAV 오디오 (`embed-wav` / `extract-wav`)**: RIFF 서브청크 모드(`--mode chunk`) 및 16비트 PCM 오디오 LSB 모드(`--lsb`) 지원 + CRC-32 검증.
    - **BMP 이미지 (`embed-bmp` / `extract-bmp`)**: 24비트 무압축 BMP R/G/B 색상 채널 LSB(최하위 비트) 변조 은닉, 4바이트 행 패딩 완벽 보존 및 12바이트 무결성 봉투(`svLt` 매직, 길이, CRC-32) 탑재.
-4. **범용 캐리어 용량 측정기 (`capacity`)** — `.bmp`, `.wav`, `.png` 미디어 파일의 총 캐리어 크기, 실제 은닉 가용 바이트 용량, 스테고 오버헤드를 정밀 산출합니다 (`svault capacity <캐리어> [--json]`).
+   - **MP3 오디오 (`embed-mp3` / `extract-mp3`, `src/mp3/`)**: ID3v2.3/ID3v2.4 비공개(`PRIV`) 태그 프레임 은닉 및 MPEG 오디오 Layer III 프레임 간 패딩 은닉, 프레임 동기 검증, 기존 메타데이터(TIT2, TPE1) 보존, CRC-32 무결성 검증 및 가용 용량 산출 지원.
+4. **범용 캐리어 용량 측정기 (`capacity`)** — `.bmp`, `.wav`, `.png`, `.mp3` 미디어 파일의 총 캐리어 크기, 실제 은닉 가용 바이트 용량, 스테고 오버헤드를 정밀 산출합니다 (`svault capacity <캐리어> [--json]`).
 5. **샤미르 비밀 공유 (`M-of-N` 키 분할, `src/shamir.rs`)** — $\text{GF}(256)$ 유한체 기반 정보이론적 비밀 분할/복원 엔진. 분기 없는 상수시간(Constant-Time) 연산으로 부채널 공격을 방어하며, 마스터 복구 키, 비밀번호, 대용량 바이너리 금고를 $N$개 조각으로 분할하여 임의의 $M$개 조각으로만 원본을 복원(`svault split` / `svault combine`)합니다. 아머드 텍스트, 한 줄 압축, JSON 직렬화 및 SHA-256/CRC-32 무결성 검증을 지원합니다.
 6. **비밀번호 강도 & 스테가노그래피 캐리어 엔트로피 감사기 (`src/audit.rs`)** — 섀넌 엔트로피(Shannon entropy bits/byte), 문자 풀 다양성, 취약 패턴 탐지(반복 문자, 연속 시퀀스, 키보드 워크, 리트스피크 사전 매칭)를 통해 비밀번호 내구성을 감사하고, PNG 청크·WAV 서브청크/LSB 스트림·BMP 픽셀 LSB 및 `.svault` 컨테이너의 변조·이상 징후를 정밀 분석(`svault audit <대상>` / `svault audit -p <비밀번호>`)합니다.
 7. **RFC 6238 TOTP 2FA 보안 금고 (`src/totp.rs`)** — 외부 라이브러리 의존성 0개의 독립 로컬 암호화 2차 인증(2FA) 금고 엔진. RFC 4648 Base32 코덱, 자체 완비 RFC 3174 SHA-1, RFC 2104 HMAC (SHA-1/256/512), `otpauth://totp/...` URI 파서/직렬화기, 부채널 타이밍 공격을 방어하는 상수시간 검증 및 터미널 시각적 잔여시간 카운트다운 진행바를 지원합니다 (`svault totp add`, `svault totp code`, `svault totp list`, `svault totp verify`).
 8. **자동 만료 클립보드 가드 (`src/clipboard_guard.rs`)** — 복호화된 비밀번호, TOTP 2FA 코드, 복구 시드문구를 Windows 클립보드로 안전하게 복사하고 설정된 유효시간(TTL, 예: `--clip-ttl 15`) 후 자동 소거합니다. Windows 10/11 클립보드 기록(Win + V) 및 클라우드 동기화 등록을 원천 차단하는 포맷 메타데이터(`CanIncludeInClipboardHistory`, `ExcludeClipboardContentFromMonitorProcessing`)를 자동 주입하며, 소거 전 SHA-256 상수시간 지문 비교(`constant_time_eq_32`)를 수행해 사용자가 이후에 복사한 다른 클립보드 데이터를 덮어쓰지 않도록 안전하게 보호합니다 (`svault clip`, 및 복호화 명령 시 `--clip`).
 9. **리드-솔로몬 / 패리티 오류 정정 아머 (`src/armor.rs`)** — 블록 패리티 복구 스트라이프와 ASCII 아머드 `.svault.asc` 내보내기/가져오기/복구를 지원하여 부분적인 비트 손상(Bit Rot)이나 텍스트 전송 채널 상의 손상에서도 컨테이너를 복원합니다. $\text{GF}(256)$ 상의 코시(Cauchy) 생성 행렬 $[I_K; A]$을 사용하여 MDS(최대 거리 분리) 부호 성질을 보장하므로, 총 $K + M$개 스트라이프 중 임의의 $K$개 온전한 조각만 있으면 모든 원본 데이터를 완벽하게 재구성합니다. 자동 손상 탐지, 자가 치유 복구(`svault repair`), `inspect` 및 `audit` 자동 감지, 자동 만료 클립보드 가드를 결합 지원합니다 (`svault armor`, `svault dearmor`, `svault repair`).
-10. **디렉터리 및 다중 파일 매니페스트 패킹 (`src/archive.rs`)** — 전체 디렉터리 트리를 상대 경로 정규화, 다중 계층 Zip Slip / 경로 순회(Path Traversal) 방어, 압축 폭탄(Zip Bomb) 방어, 파일별 SHA-256 암호학적 매니페스트, Unix/Windows 파일 권한 보존과 함께 단일 `SVLT` 컨테이너로 완전 밀봉(`svault pack-dir` / `svault unpack-dir`)합니다. `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi` 및 투명한 스테가노그래피(PNG/WAV/BMP) & ASCII 아머 캐리어 추출을 지원합니다.
+10. **디렉터리 및 다중 파일 매니페스트 패킹 (`src/archive.rs`)** — 전체 디렉터리 트리를 상대 경로 정규화, 다중 계층 Zip Slip / 경로 순회(Path Traversal) 방어, 압축 폭탄(Zip Bomb) 방어, 파일별 SHA-256 암호학적 매니페스트, Unix/Windows 파일 권한 보존과 함께 단일 `SVLT` 컨테이너로 완전 밀봉(`svault pack-dir` / `svault unpack-dir`)합니다. `--list`, `--verify-only`, `--overwrite`, `--json`, `--dpapi` 및 투명한 스테가노그래피(PNG/WAV/BMP/MP3) & ASCII 아머 캐리어 추출을 지원합니다.
 11. **키파일 + 비밀번호 이중 인증(2FA) 키 유도 (`src/keyfile.rs`)** — 외장 하드웨어 또는 USB 키파일(`--keyfile <경로>`)을 사용자 비밀번호와 결합하여 64 KiB 스트리밍 HMAC-SHA256 사전 해싱 후 Argon2id로 키를 유도합니다. 비밀번호 + 키파일 이중 인증(2FA) 및 키파일 단독 모드를 모두 지원하며, 내장 CSPRNG 키파일 생성(`svault keyfile generate`), SHA-256 지문 출력(`svault keyfile fingerprint`), 섀넌 엔트로피 감사(`svault keyfile inspect`), 제로화 메모리 소거 및 모든 미디어 스테가노그래피 캐리어·디렉터리 패킹과의 투명한 통합을 지원합니다.
 12. **청크 스트리밍 암호화 엔진 (`src/stream.rs`)** — 멀티 기가바이트(Multi-GB) 대용량 파일과 데이터 스트림을 $O(1)$ 고정 RAM 슬라이딩 윈도우로 안전하게 암호화 및 복호화합니다 (기본 4 MiB 청크, 64 KiB–64 MiB 범위). `SVST` v1 바이너리 헤더, 청크별 고유 논스 유도(`SHA256(b"shadow-vault:stream-chunk-nonce:v1" || base_nonce || chunk_index || tag)`), 청크별 AAD 위변조 방어, 시간 잠금/만료 정책 결합 및 Windows DPAPI 스트림 키 하드웨어 귀속을 지원합니다 (`svault stream encrypt`, `svault stream decrypt`, `svault stream inspect`, `--stream`, `--chunk-size`).
 13. **스테가노그래피 캐리어 시각/통계적 디프 리포트 (`src/diff.rs`)** — 원본과 스테가노그래피 캐리어 간의 시각 신호 왜곡(MSE, PSNR, MAE, 순수 LSB 변조율), 16비트 오디오 왜곡(SNR, PSNR), 구조적 청크 테이블 정렬 및 섀넌 엔트로피 차이를 비교 분석(`svault compare`)합니다.
 14. **데드맨 스위치 & 최대 실패 횟수 자동 파기 가드 (`src/guard.rs`)** — 변조 방지 시도 원장(`.guard` 동반 파일 또는 은닉 전역 원장)을 기반으로 $K$회 연속 인증 실패 시 3단계(0x00, 0xFF, CSPRNG) 영구 파일 파쇄를 자동 실행하며, 비활동 기한 만료 시 셀프 파쇄를 발동하는 데드맨 스위치를 제공합니다 (`svault guard arm`, `svault guard status`, `svault guard checkin`, `svault guard reset`, `svault guard trigger`).
 15. **결정론적 & CSPRNG 비밀번호 생성기 (`src/passgen/`)** — 2,048개 BIP-39 단어 사전 기반 다이스웨어(Diceware) 복구 문구 생성, 시각적 혼동 문자 제거(`--exclude-ambiguous`) 패스워드/PIN 생성, Hex/Base64/Base32 원시 암호학적 바이트 토큰 생성, 마스터 시드 결정론적 유도(`--seed`, `--context`), 5단계 엔트로피 내구성 평가 및 자동 만료 클립보드 가드 결합을 지원합니다 (`svault keygen`).
-16. **전 서브커맨드 전수 구조화 JSON 출력 모드 (`--json`)** — 모든 서브커맨드(`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, `keygen`, `rotate`, `canary`)에서 기계 판독 가능한 일관된 표준 JSON 응답(`status`, `command`, 세부 메타데이터, 바이트 크기, 지문)을 제공하여 CI/CD 및 자동화 쉘 스크립트 파이프라인 연계를 지원합니다.
-17. **컨테이너 키 교체 및 비밀번호 회전 (`rotate`, `src/rotate.rs`)** — 기존 `.svault` 컨테이너 또는 스테가노그래피 캐리어(PNG, BMP, WAV, ASCII 아머)를 새로운 비밀번호나 키파일로 재암호화(`svault rotate`)합니다. 매 회전마다 독립적인 16바이트 솔트와 12바이트 논스를 생성하고, Windows DPAPI 하드웨어 귀속 설정 변경(`--dpapi`/`--no-dpapi`), 시간 잠금/만료 정책 보존 또는 제거(`--clear-policy`), 원자적 임시 파일 치환을 지원합니다.
+16. **전 서브커맨드 전수 구조화 JSON 출력 모드 (`--json`)** — 모든 서브커맨드(`encrypt`, `decrypt`, `encrypt-decoy`, `decrypt-decoy`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `embed-mp3`, `extract-mp3`, `armor`, `dearmor`, `repair`, `shred`, `split`, `combine`, `keyfile`, `totp`, `clip`, `guard`, `pack-dir`, `unpack-dir`, `inspect`, `audit`, `compare`, `keygen`, `rotate`, `canary`)에서 기계 판독 가능한 일관된 표준 JSON 응답(`status`, `command`, 세부 메타데이터, 바이트 크기, 지문)을 제공하여 CI/CD 및 자동화 쉘 스크립트 파이프라인 연계를 지원합니다.
+17. **컨테이너 키 교체 및 비밀번호 회전 (`rotate`, `src/rotate.rs`)** — 기존 `.svault` 컨테이너 또는 스테가노그래피 캐리어(PNG, BMP, WAV, MP3, ASCII 아머)를 새로운 비밀번호나 키파일로 재암호화(`svault rotate`)합니다. 매 회전마다 독립적인 16바이트 솔트와 12바이트 논스를 생성하고, Windows DPAPI 하드웨어 귀속 설정 변경(`--dpapi`/`--no-dpapi`), 시간 잠금/만료 정책 보존 또는 제거(`--clear-policy`), 원자적 임시 파일 치환을 지원합니다.
 18. **분리형 무결성 매니페스트 및 카나리 검증 (`canary`, `src/canary.rs`)** — 볼트 및 스테가노그래피 캐리어 디렉터리의 변조 여부를 모니터링하는 서명된 SHA-256 카나리 매니페스트를 생성하고 검증(`svault canary init` / `svault canary verify`)합니다. 다중 캐리어 포맷 자동 식별, Argon2id + HMAC-SHA256 서명 인증, 상수 시간 서명 검증, 수정/삭제/미추적 이상 탐지 및 구조화 JSON 출력을 지원합니다.
-19. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
+19. **MP3 ID3v2 & 오디오 프레임 스테가노그래피 엔진 (`src/mp3/`)** — MPEG Audio Layer III 파일 내부에 ID3v2 PRIV 비공개 태그 프레임 은닉, MPEG 프레임 간 패딩 은닉, 투명한 자동 감지, 미끼 금고 그럴듯한 부인 및 캐리어 용량 산출을 제공합니다 (`svault embed-mp3` / `svault extract-mp3`).
+20. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
 ### 주요 기능
 
@@ -458,6 +470,11 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
   - **12바이트 무결성 봉투**: `[매직 "svLt": 4B][길이: 4B LE][페이로드: NB][CRC-32: 4B LE]` 봉투 캡슐화 및 부채널 저항 상수시간 CRC-32 검증.
   - **캐리어 감사 & 스테그분석 (`audit`)**: `svault audit` 명령어로 BMP 픽셀 LSB 무결성, 은닉 스트림 유무 및 정상 이미지 판별.
   - **미끼 금고 및 클립보드 연동**: 그럴듯한 부인 이중 암호 미끼 금고(`--decoy`, `--decoy-passphrase`) 및 자동 만료 클립보드(`--clip`, `--clip-ttl`) 완전 지원.
+- **MP3 ID3v2 & 오디오 프레임 스테가노그래피 (`embed-mp3` / `extract-mp3`)** — MPEG Audio Layer III 오디오 파일 다중 모드 은닉:
+  - **ID3v2 비공개 프레임 모드 (`--mode id3v2`)**: ID3v2.3 및 ID3v2.4 `PRIV` 프레임(`Owner: ShadowVault`) 캡슐화, 기존 타이틀/아티스트 메타데이터 완벽 보존 및 구 버전 프레임 원자적 치환.
+  - **오디오 프레임 간 패딩 모드 (`--mode frame`)**: 0xFFE/0xFFF 프레임 동기 비트 보존, 유효 프레임 경계 간 무결성 봉투(`svLt` 매직, 길이, 페이로드, CRC-32) 삽입으로 오디오 디코더 재생 영향 없이 투명하게 은닉.
+  - **투명한 자동 감지 (`--mode auto`)**: `extract-mp3` 실행 시 ID3v2 태그 및 프레임 간 패딩 데이터를 자동 스캔하여 즉시 추출.
+  - **미끼 금고 및 클립보드 연동**: 그럴듯한 부인 이중 암호 미끼 금고(`--decoy`, `--decoy-passphrase`) 및 자동 만료 클립보드(`--clip`, `--clip-ttl`) 완전 지원.
 - **리드-솔로몬 / 패리티 오류 정정 아머 (`armor` / `dearmor` / `repair`)** — 강력한 컨테이너 오류 정정 및 ASCII 아머드 엔진:
   - **$\text{GF}(256)$ 코시 MDS 리드-솔로몬 부호**: 코시 원소 $A_{i, j} = \frac{1}{(K + i) \oplus j}$를 적용한 $[I_K; A]$ 생성 행렬 기반. $\text{GF}(256)$ 가우스 소거법을 통해 $K + M$개 스트라이프 중 임의의 $K$개 온전한 조각만으로 모든 데이터 스트라이프를 완벽 복원.
   - **스트라이프별 CRC-32 및 전체 SHA-256 바인딩**: 개별 스트라이프마다 독립적인 CRC-32 검증을 수행하여 손상 위치를 정밀 격리하고, 전체 컨테이너 복원 후 SHA-256 다이제스트로 최종 무결성 입증.
@@ -469,9 +486,9 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
   - **경로 순회 & Zip Slip 원천 차단**: `/` 기반 상대 경로 정규화, `..`, 절대/UNC 경로, 드라이브 문자, 콜론 대체 데이터 스트림(ADS), 널 바이트 및 Windows 예약 장치명(`CON`, `PRN`, `AUX`, `NUL`, `COM1..9`, `LPT1..9`) 완벽 차단.
   - **압축 폭탄 방어**: 총 아카이브 크기(8 GiB), 단일 파일 크기(4 GiB), 엔트리 수(100,000개), 경로 길이(4,096바이트), 디렉터리 깊이(64단계) 상한 및 메모리 할당 전 슬라이스 길이 선제 검증.
   - **유연한 매니페스트 CLI**: `--list`로 아카이브 내용 조회, `--verify-only`로 디스크 기록 없이 메모리 상에서 파일별 SHA-256 무결성 즉시 검증, `--overwrite`로 대상 파일 덮어쓰기 안전 제어.
-  - **투명한 캐리어 & 아머 자동 해제**: `unpack-dir` 실행 시 `.svault.asc` 아머드 문서 및 PNG/WAV/BMP 스테가노그래피 캐리어로부터 컨테이너를 전자동 추출.
-- **범용 캐리어 용량 측정 (`capacity`)** — `.bmp`, `.wav`, `.png` 미디어의 전체 바이트, 순수 은닉 가용 용량, 12바이트 스테고 봉투 오버헤드를 정밀 계산하며 파이프라인 연동용 `--json` 출력 지원.
-- **컨테이너 헤더 검사 (`inspect`)** — 복호화 없이 `.svault`, `.png`, `.wav`, `.bmp` 파일의 컨테이너 버전, DPAPI 귀속 여부, 미끼 컨테이너 여부, 페이로드 크기, 솔트 값을 즉시 확인합니다 (은닉 슬롯의 크기는 은폐).
+  - **투명한 캐리어 & 아머 자동 해제**: `unpack-dir` 실행 시 `.svault.asc` 아머드 문서 및 PNG/WAV/BMP/MP3 스테가노그래피 캐리어로부터 컨테이너를 전자동 추출.
+- **범용 캐리어 용량 측정 (`capacity`)** — `.bmp`, `.wav`, `.png`, `.mp3` 미디어의 전체 바이트, 순수 은닉 가용 용량, 12바이트 스테고 봉투 오버헤드를 정밀 계산하며 파이프라인 연동용 `--json` 출력 지원.
+- **컨테이너 헤더 검사 (`inspect`)** — 복호화 없이 `.svault`, `.png`, `.wav`, `.bmp`, `.mp3` 파일의 컨테이너 버전, DPAPI 귀속 여부, 미끼 컨테이너 여부, 페이로드 크기, 솔트 값을 즉시 확인합니다 (은닉 슬롯의 크기는 은폐).
 - **시간 잠금 및 자동 만료 정책 헤더 (`policy`)** — 암호화 컨테이너에 시간 기반 접근 제어 정책을 암호학적으로 바인딩:
   - **인증된 정책 헤더 (`SVPO`)**: 매직 `SVPO`, 버전 1, 플래그(`HAS_NOT_BEFORE`, `HAS_EXPIRES_AT`, `HAS_DESCRIPTION`), `created_at`, `not_before`, `expires_at`, 임의 설명(최대 256B) 및 CRC-32 무결성 검증을 포함하는 표준 28바이트 바이너리 헤더.
   - **AEAD 연관 데이터(AAD) 완벽 결속**: 직렬화된 정책 헤더 전체가 ChaCha20-Poly1305의 추가 인증 데이터(`aad`)로 주입되어, 타임스탬프나 설명이 단 1비트라도 변조되면 Poly1305 MAC 검증 실패로 복호화가 원천 차단됩니다.
@@ -483,7 +500,7 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
   - **암호학적 2FA 및 키파일 단독 모드**: 비밀번호 + 키파일 결합 시 `HMAC-SHA256(key = 비밀번호, data = "shadow-vault:keyfile-v1:" || 키파일_스트림)`으로 256비트 시드를 유도하며, 키파일 단독 모드 시 도메인 구분자 `b"shadow-vault:keyfile-only:v1"`을 적용해 Argon2id로 전달.
   - **CSPRNG 키파일 생성기 (`svault keyfile generate`)**: `rand::rngs::OsRng` 기반의 고품질 난수 키파일(기본 64바이트) 안전 생성.
   - **지문 및 섀넌 엔트로피 검사 (`inspect` / `fingerprint`)**: SHA-256 지문(`SHA256:<hex>`) 및 표본 크기 정규화가 적용된 섀넌 엔트로피 품질 평가 제공.
-  - **전 명령어 유니버설 연동**: `encrypt`, `decrypt`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `pack-dir`, `unpack-dir`, 디코이 금고 등 전체 암호화 워크플로우에 `--keyfile` / `-k` 완전 결합.
+  - **전 명령어 유니버설 연동**: `encrypt`, `decrypt`, `embed`, `extract`, `embed-wav`, `extract-wav`, `embed-bmp`, `extract-bmp`, `embed-mp3`, `extract-mp3`, `pack-dir`, `unpack-dir`, 디코이 금고 등 전체 암호화 워크플로우에 `--keyfile` / `-k` 완전 결합.
 - **청크 스트리밍 암호화 (`stream`)** — 고정 $O(1)$ 메모리 대용량 스트리밍 인증 암호화:
   - **`SVST` v1 바이너리 와이어 포맷**: 38바이트 베이스 헤더(`SVST`, 버전 1, 플래그, 청크 크기, 솔트, 베이스 논스)와 선택적 `SVPO` 정책 헤더 및 DPAPI 암호화 스트림 키 탑재.
   - **청크 논스 및 AAD 암호학적 결합**: 청크마다 고유 논스를 유도하여 IV 재사용을 방지하고, AAD에 청크 인덱스, 태그(중간/종료), 솔트, 정책 해시를 바인딩하여 순서 변경, 누락, 주입 공격을 원천 방어.
@@ -521,9 +538,10 @@ svault embed-wav -c audio.wav -s secret.txt -o audio_lsb.wav -p "비밀번호" -
 # 7. WAV 오디오 파일에서 비밀 파일 추출 및 복호화
 svault extract-wav -c audio_lsb.wav -o recovered_audio.txt -p "비밀번호"
 
-# 8. 스테가노그래피 캐리어 용량 측정 (.bmp, .wav, .png)
+# 8. 스테가노그래피 캐리어 용량 측정 (.bmp, .wav, .png, .mp3)
 svault capacity photo.bmp
 svault capacity audio.wav --json
+svault capacity song.mp3
 
 # 9. 24비트 BMP 이미지 속에 비밀 파일 픽셀 LSB 암호화 은닉
 svault embed-bmp -c photo.bmp -s secret.txt -o photo_lsb.bmp -p "비밀번호"
@@ -531,8 +549,16 @@ svault embed-bmp -c photo.bmp -s secret.txt -o photo_lsb.bmp -p "비밀번호"
 # 10. BMP 이미지에서 비밀 파일 추출 후 안전 클립보드로 직접 복사 (15초 후 자동 소거)
 svault extract-bmp -c photo_lsb.bmp -p "비밀번호" --clip --clip-ttl 15
 
-# 11. 컨테이너 또는 스테고 미디어(.png, .wav, .bmp) 메타데이터 조회
+# 11. MP3 오디오 파일 속에 비밀 파일 암호화 은닉 (ID3v2 PRIV 프레임 또는 MPEG 프레임 간 패딩)
+svault embed-mp3 -c song.mp3 -s secret.txt -o song_stego.mp3 -p "비밀번호" --mode id3v2
+svault embed-mp3 -c song.mp3 -s secret.txt -o song_frame.mp3 -p "비밀번호" --mode frame
+
+# 12. MP3 오디오 파일에서 비밀 파일 자동 감지 추출 및 복호화
+svault extract-mp3 -c song_stego.mp3 -o recovered_mp3.txt -p "비밀번호"
+
+# 13. 컨테이너 또는 스테고 미디어(.png, .wav, .bmp, .mp3) 메타데이터 조회
 svault inspect photo_lsb.bmp
+svault inspect song_stego.mp3
 
 # 12. 원본 평문 파일 3-패스 완전 파쇄
 svault shred secret.txt --passes 3
@@ -593,7 +619,7 @@ svault audit secret.svault.asc --json
 # 28. 전체 디렉터리 트리를 암호화된 .svault 아카이브로 패킹
 svault pack-dir -i ./my_project -o project.svault -p "금고비밀번호" --list
 
-# 29. 스테가노그래피 캐리어(PNG, WAV, BMP) 또는 ASCII 아머로 디렉터리 은닉 패킹
+# 29. 스테가노그래피 캐리어(PNG, WAV, BMP, MP3) 또는 ASCII 아머로 디렉터리 은닉 패킹
 svault pack-dir -i ./my_project -o project.png -p "금고비밀번호" --carrier cover.png
 svault pack-dir -i ./my_project -o project.svault.asc -p "금고비밀번호" --armor
 
@@ -679,7 +705,7 @@ svault rotate -i vault.svault -o rotated.svault -p "기존비밀번호" -n "신�
 svault rotate -i vault.svault --in-place -p "기존비밀번호" -n "신규비밀번호"
 svault rotate -i stego.bmp --in-place -p "기존비밀번호" -n "신규비밀번호"
 
-# 51. 스테가노그래피 캐리어(PNG, WAV, BMP, ASCII 아머) 자격증명 회전
+# 51. 스테가노그래피 캐리어(PNG, WAV, BMP, MP3, ASCII 아머) 자격증명 회전
 svault rotate -i carrier.png -o rotated.png -p "기존비밀번호" -n "신규비밀번호"
 svault rotate -i carrier.asc -o rotated.asc -p "기존비밀번호" -n "신규비밀번호"
 

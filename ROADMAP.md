@@ -25,6 +25,7 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [x] **Container Re-Key & Passphrase Rotation (`src/rotate.rs`)** — Atomically re-encrypt existing `.svault` containers or stego carriers (PNG, BMP, WAV, ASCII armor) with fresh 16-byte random salts and 12-byte nonces, DPAPI hardware binding toggle (`--dpapi`/`--no-dpapi`), temporal policy preservation or stripping (`--clear-policy`), and crash-resilient atomic file replacement (`svault rotate`).
 - [x] **Detached Integrity Manifest & Canary Verification (`src/canary.rs`)** — Generate and verify signed SHA-256 tamper canaries across vault directories (`svault canary init` / `svault canary verify`) with multi-carrier auto-detection, Argon2id + HMAC-SHA256 signature authentication, constant-time verification, and missing/modified/untracked anomaly reports.
 - [x] **Interactive In-Memory Vault Shell (`svault repl`)** — Unlock a key-value secret store once in memory and query, insert, remove, import, and export secrets interactively or via batch command execution without leaving plaintext artifacts on disk, with auto-expiring clipboard protection, read-only mode, and crash-resilient atomic re-encryption.
+- [x] **MP3 ID3v2 & Audio Frame Steganography Carrier (`src/mp3/`)** — Conceal and extract encrypted `SVLT` containers inside ID3v2.3/ID3v2.4 private (`PRIV`) tag frames or inter-frame padding between MPEG Audio Layer III frames (`svault embed-mp3` / `svault extract-mp3`) with ID3 metadata preservation (TIT2, TPE1, TALB, APIC), syncsafe integer handling, CRC-32 integrity validation, auto-detection mode, carrier capacity estimation (`svault capacity`), and carrier re-keying rotation.
 
 ---
 
@@ -35,7 +36,6 @@ This document tracks shipped features and upcoming cryptographic, steganographic
 - [ ] **PKCS#11 Smartcard & YubiKey PIV Key Binding (`src/piv.rs`)** — Decrypt vaults using RSA/EC private keys stored on hardware security tokens via PKCS#11 / Windows PIV minidriver (`--piv-slot`).
 
 ### Advanced Steganography & Covert Transports
-- [ ] **MP3 ID3v2 & Frame Padding Steganography (`src/mp3.rs`)** — Embed encrypted containers inside MPEG Audio Layer III files while preserving playback and stream CRC integrity (`svault embed-mp3` / `svault extract-mp3`).
 - [ ] **WebP Lossless Stego Carrier Engine (`src/webp.rs`)** — RIFF/WEBP VP8L lossless pixel steganography with metadata preservation (`svault embed-webp` / `svault extract-webp`).
 - [ ] **FLAC Lossless Audio Carrier Steganography (`src/flac.rs`)** — Conceal encrypted containers inside FLAC `APPLICATION` metadata blocks and verbatim subframe residual LSB channels (`svault embed-flac` / `svault extract-flac`).
 - [ ] **PDF Cross-Reference Stream Steganography (`src/pdf.rs`)** — Conceal containers within incremental PDF revision updates while maintaining document viewability (`svault embed-pdf` / `svault extract-pdf`).

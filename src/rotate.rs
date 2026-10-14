@@ -19,6 +19,7 @@ use crate::crypto::{
     self, FLAG_DECOY, FLAG_DPAPI, FLAG_POLICY, HEADER_LEN, MAGIC, SALT_LEN, VERSION, VERSION_V2,
 };
 use crate::error::{Error, Result};
+use crate::mp3;
 use crate::policy::PolicyHeader;
 use crate::stego;
 use crate::wav;
@@ -80,6 +81,7 @@ pub enum CarrierType {
     Bmp,
     Wav,
     Armor,
+    Mp3,
 }
 
 impl std::fmt::Display for CarrierType {
@@ -90,6 +92,7 @@ impl std::fmt::Display for CarrierType {
             Self::Bmp => write!(f, "bmp"),
             Self::Wav => write!(f, "wav"),
             Self::Armor => write!(f, "armor"),
+            Self::Mp3 => write!(f, "mp3"),
         }
     }
 }
@@ -104,6 +107,10 @@ pub fn detect_carrier_type(data: &[u8]) -> CarrierType {
         CarrierType::Wav
     } else if data.starts_with(b"BM") {
         CarrierType::Bmp
+    } else if data.starts_with(b"ID3")
+        || (data.len() >= 2 && data[0] == 0xFF && (data[1] & 0xE0) == 0xE0)
+    {
+        CarrierType::Mp3
     } else {
         CarrierType::Vault
     }
@@ -262,6 +269,7 @@ pub fn rotate_carrier_file(
         CarrierType::Png => stego::extract_from_png(&raw_bytes)?,
         CarrierType::Bmp => bmp::extract_from_bmp(&raw_bytes)?,
         CarrierType::Wav => wav::extract_from_wav(&raw_bytes, wav::ExtractWavMode::Auto)?,
+        CarrierType::Mp3 => mp3::extract_from_mp3(&raw_bytes, mp3::ExtractMp3Mode::Auto)?,
         CarrierType::Vault => raw_bytes.clone(),
     };
 
@@ -278,6 +286,14 @@ pub fn rotate_carrier_file(
                 wav::WavMode::Lsb
             };
             wav::embed_in_wav(&raw_bytes, &res.new_container, mode)?
+        }
+        CarrierType::Mp3 => {
+            let mode = if mp3::extract_from_mp3(&raw_bytes, mp3::ExtractMp3Mode::Frame).is_ok() {
+                mp3::Mp3Mode::Frame
+            } else {
+                mp3::Mp3Mode::Id3v2
+            };
+            mp3::embed_in_mp3(&raw_bytes, &res.new_container, mode)?
         }
         CarrierType::Armor => {
             let text = std::str::from_utf8(&raw_bytes)

@@ -24,6 +24,7 @@ pub const VERSION_V2: u8 = 2;
 pub const FLAG_DPAPI: u8 = 0x01;
 pub const FLAG_DECOY: u8 = 0x02;
 pub const FLAG_POLICY: u8 = 0x04;
+pub const FLAG_FIDO2: u8 = 0x08;
 
 pub const SALT_LEN: usize = 16;
 pub const NONCE_LEN: usize = 12;
@@ -33,10 +34,12 @@ pub const HEADER_LEN: usize = 4 + 1 + 1 + SALT_LEN + NONCE_LEN; // 34 bytes
 pub struct ContainerInfo {
     pub version: u8,
     pub dpapi_bound: bool,
+    pub fido2_bound: bool,
     pub payload_size: usize,
     pub salt_hex: String,
     pub decoy_container: bool,
     pub policy: Option<PolicyHeader>,
+    pub fido2: Option<crate::hardware_token::Fido2Header>,
 }
 
 /// Resolve cryptographic key material from an optional passphrase and optional keyfile path.
@@ -66,49 +69,79 @@ pub fn resolve_key_material(
     }
 }
 
-/// Seal plaintext bytes into a `SVLT` v1 encrypted container with an optional time/expiration policy and optional keyfile.
-pub fn seal_with_policy_and_keyfile(
+/// Seal plaintext bytes into a `SVLT` v1 encrypted container with optional time policy, keyfile, and FIDO2 hardware binding.
+pub fn seal_with_fido2(
     plaintext: &[u8],
     passphrase: Option<&str>,
     keyfile: Option<&Path>,
     bind_dpapi: bool,
     policy: Option<&PolicyHeader>,
+    fido2_cred: Option<&crate::hardware_token::Fido2Credential>,
+    fido2_pin: Option<&str>,
 ) -> Result<Vec<u8>> {
-    let key_material = resolve_key_material(passphrase, keyfile)?;
+    let base_key_material = resolve_key_material(passphrase, keyfile)?;
 
     let mut salt = [0u8; SALT_LEN];
     let mut nonce_bytes = [0u8; NONCE_LEN];
     rand::thread_rng().fill_bytes(&mut salt);
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
-    let key_bytes = derive_key(&key_material, &salt)?;
+    let (fido2_wire, effective_key_material, fido2_flag): (
+        Option<Vec<u8>>,
+        Zeroizing<Vec<u8>>,
+        u8,
+    ) = if let Some(cred) = fido2_cred {
+        let hw_secret = crate::hardware_token::derive_hardware_secret(cred, &salt, fido2_pin)?;
+        let combined = crate::hardware_token::combine_hardware_key_material(
+            &base_key_material,
+            &hw_secret[..],
+        );
+        let id_bytes = crate::hardware_token::credential::hex_decode(&cred.id)
+            .unwrap_or_else(|_| cred.id.as_bytes().to_vec());
+        let fido2_hdr =
+            crate::hardware_token::Fido2Header::new(cred.device_type, &id_bytes, &cred.rp_id);
+        (
+            Some(fido2_hdr.to_bytes()),
+            Zeroizing::new(combined.to_vec()),
+            FLAG_FIDO2,
+        )
+    } else {
+        (None, Zeroizing::new(base_key_material.to_vec()), 0u8)
+    };
+
+    let key_bytes = derive_key(&effective_key_material, &salt)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(&nonce_bytes);
 
-    let (policy_wire, flags) = match policy {
+    let mut flags = (if bind_dpapi { FLAG_DPAPI } else { 0 }) | fido2_flag;
+    let policy_wire = match policy {
         Some(p) => {
-            let bytes = p.to_bytes();
-            (
-                Some(bytes),
-                (if bind_dpapi { FLAG_DPAPI } else { 0 }) | FLAG_POLICY,
-            )
+            flags |= FLAG_POLICY;
+            Some(p.to_bytes())
         }
-        None => (None, if bind_dpapi { FLAG_DPAPI } else { 0 }),
+        None => None,
     };
 
-    let ciphertext = match &policy_wire {
-        Some(pw) => {
-            let payload = Payload {
-                msg: plaintext,
-                aad: pw.as_slice(),
-            };
-            cipher
-                .encrypt(nonce, payload)
-                .map_err(|_| Error::Crypto("ChaCha20-Poly1305 encryption failed".into()))?
-        }
-        None => cipher
+    let mut aad = Vec::new();
+    if let Some(ref pw) = policy_wire {
+        aad.extend_from_slice(pw);
+    }
+    if let Some(ref fw) = fido2_wire {
+        aad.extend_from_slice(fw);
+    }
+
+    let ciphertext = if !aad.is_empty() {
+        let payload = Payload {
+            msg: plaintext,
+            aad: aad.as_slice(),
+        };
+        cipher
+            .encrypt(nonce, payload)
+            .map_err(|_| Error::Crypto("ChaCha20-Poly1305 encryption failed".into()))?
+    } else {
+        cipher
             .encrypt(nonce, plaintext)
-            .map_err(|_| Error::Crypto("ChaCha20-Poly1305 encryption failed".into()))?,
+            .map_err(|_| Error::Crypto("ChaCha20-Poly1305 encryption failed".into()))?
     };
 
     let body = if bind_dpapi {
@@ -122,8 +155,13 @@ pub fn seal_with_policy_and_keyfile(
     } else {
         0
     };
+    let extra_fido2_len = if let Some(ref fw) = fido2_wire {
+        4 + fw.len()
+    } else {
+        0
+    };
 
-    let mut out = Vec::with_capacity(HEADER_LEN + extra_policy_len + body.len());
+    let mut out = Vec::with_capacity(HEADER_LEN + extra_policy_len + extra_fido2_len + body.len());
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
     out.push(flags);
@@ -135,9 +173,27 @@ pub fn seal_with_policy_and_keyfile(
         out.extend_from_slice(&plen.to_le_bytes());
         out.extend_from_slice(pw);
     }
+    if let Some(ref fw) = fido2_wire {
+        let flen = fw.len() as u32;
+        out.extend_from_slice(&flen.to_le_bytes());
+        out.extend_from_slice(fw);
+    }
 
     out.extend_from_slice(&body);
     Ok(out)
+}
+
+/// Seal plaintext bytes into a `SVLT` v1 encrypted container with an optional time/expiration policy and optional keyfile.
+pub fn seal_with_policy_and_keyfile(
+    plaintext: &[u8],
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
+    bind_dpapi: bool,
+    policy: Option<&PolicyHeader>,
+) -> Result<Vec<u8>> {
+    seal_with_fido2(
+        plaintext, passphrase, keyfile, bind_dpapi, policy, None, None,
+    )
 }
 
 /// Seal plaintext bytes into a `SVLT` v1 encrypted container with an optional time/expiration policy.
@@ -171,11 +227,13 @@ pub fn open(container: &[u8], passphrase: &str) -> Result<Vec<u8>> {
     open_at(container, passphrase, None)
 }
 
-/// Open a `SVLT` container with keyfile and enforce policy validation at the specified UTC timestamp (or current time if None).
-pub fn open_at_with_keyfile(
+/// Open a `SVLT` container with optional keyfile, policy enforcement, and FIDO2 hardware token verification.
+pub fn open_at_with_fido2(
     container: &[u8],
     passphrase: Option<&str>,
     keyfile: Option<&Path>,
+    fido2_cred: Option<&Path>,
+    fido2_pin: Option<&str>,
     at_time: Option<u64>,
 ) -> Result<Vec<u8>> {
     let key_material = resolve_key_material(passphrase, keyfile)?;
@@ -209,7 +267,7 @@ pub fn open_at_with_keyfile(
     let salt = &container[6..6 + SALT_LEN];
     let nonce_bytes = &container[6 + SALT_LEN..HEADER_LEN];
 
-    let (policy_wire, body_offset) = if (flags & FLAG_POLICY) != 0 {
+    let (policy_wire, after_policy_offset) = if (flags & FLAG_POLICY) != 0 {
         if container.len() < HEADER_LEN + 4 {
             return Err(Error::Format("container policy header truncated".into()));
         }
@@ -236,6 +294,33 @@ pub fn open_at_with_keyfile(
         (None, HEADER_LEN)
     };
 
+    let (fido2_hdr, fido2_wire, body_offset) = if (flags & FLAG_FIDO2) != 0 {
+        if container.len() < after_policy_offset + 4 {
+            return Err(Error::Format(
+                "container hardware token header truncated".into(),
+            ));
+        }
+        let fido2_len = u32::from_le_bytes(
+            container[after_policy_offset..after_policy_offset + 4]
+                .try_into()
+                .map_err(|_| Error::Format("failed to read hardware token length".into()))?,
+        ) as usize;
+        let fido2_start = after_policy_offset + 4;
+        let fido2_end = fido2_start
+            .checked_add(fido2_len)
+            .ok_or_else(|| Error::Format("hardware token length integer overflow".into()))?;
+        if container.len() < fido2_end + 16 {
+            return Err(Error::Format(
+                "container truncated within hardware token header or body".into(),
+            ));
+        }
+        let f_bytes = &container[fido2_start..fido2_end];
+        let parsed = crate::hardware_token::Fido2Header::from_bytes(f_bytes)?;
+        (Some(parsed), Some(f_bytes), fido2_end)
+    } else {
+        (None, None, after_policy_offset)
+    };
+
     let body = &container[body_offset..];
     let ciphertext = if (flags & FLAG_DPAPI) != 0 {
         dpapi_unprotect(body)?
@@ -243,26 +328,59 @@ pub fn open_at_with_keyfile(
         body.to_vec()
     };
 
-    let key_bytes = derive_key(&key_material, salt)?;
+    let effective_key_material: Zeroizing<Vec<u8>> = if let Some(hdr) = fido2_hdr {
+        let resolved_cred =
+            crate::hardware_token::resolve_credential(fido2_cred, Some(&hdr.credential_id))?;
+        let hw_secret =
+            crate::hardware_token::derive_hardware_secret(&resolved_cred, salt, fido2_pin)?;
+        let combined =
+            crate::hardware_token::combine_hardware_key_material(&key_material, &hw_secret[..]);
+        Zeroizing::new(combined.to_vec())
+    } else if fido2_cred.is_some() {
+        return Err(Error::HardwareToken(
+            "hardware token specified via --fido2 but container is not hardware-bound".into(),
+        ));
+    } else {
+        Zeroizing::new(key_material.to_vec())
+    };
+
+    let key_bytes = derive_key(&effective_key_material, salt)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&*key_bytes));
     let nonce = Nonce::from_slice(nonce_bytes);
 
-    match policy_wire {
-        Some(pw) => {
-            let payload = Payload {
-                msg: ciphertext.as_ref(),
-                aad: pw,
-            };
-            cipher.decrypt(nonce, payload).map_err(|_| {
-                Error::Crypto(
-                    "authentication failed — wrong passphrase or tampered container/policy".into(),
-                )
-            })
-        }
-        None => cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|_| {
-            Error::Crypto("authentication failed — wrong passphrase or tampered container".into())
-        }),
+    let mut aad = Vec::new();
+    if let Some(pw) = policy_wire {
+        aad.extend_from_slice(pw);
     }
+    if let Some(fw) = fido2_wire {
+        aad.extend_from_slice(fw);
+    }
+
+    if !aad.is_empty() {
+        let payload = Payload {
+            msg: ciphertext.as_ref(),
+            aad: aad.as_slice(),
+        };
+        cipher.decrypt(nonce, payload).map_err(|_| {
+            Error::Crypto(
+                "authentication failed — wrong passphrase, incorrect hardware key, or tampered container/policy".into(),
+            )
+        })
+    } else {
+        cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|_| {
+            Error::Crypto("authentication failed — wrong passphrase or tampered container".into())
+        })
+    }
+}
+
+/// Open a `SVLT` container with keyfile and enforce policy validation at the specified UTC timestamp (or current time if None).
+pub fn open_at_with_keyfile(
+    container: &[u8],
+    passphrase: Option<&str>,
+    keyfile: Option<&Path>,
+    at_time: Option<u64>,
+) -> Result<Vec<u8>> {
+    open_at_with_fido2(container, passphrase, keyfile, None, None, at_time)
 }
 
 /// Open a `SVLT` container and enforce policy validation at the specified UTC timestamp (or current time if None).
@@ -304,7 +422,7 @@ pub fn inspect(container: &[u8]) -> Result<ContainerInfo> {
     let salt = &container[6..6 + SALT_LEN];
     let salt_hex = salt.iter().map(|b| format!("{b:02x}")).collect::<String>();
 
-    let (policy, body_offset) = if (flags & FLAG_POLICY) != 0 {
+    let (policy, after_policy_offset) = if (flags & FLAG_POLICY) != 0 {
         if container.len() < HEADER_LEN + 4 {
             return Err(Error::Format("container policy header truncated".into()));
         }
@@ -329,15 +447,44 @@ pub fn inspect(container: &[u8]) -> Result<ContainerInfo> {
         (None, HEADER_LEN)
     };
 
+    let (fido2, body_offset) = if (flags & FLAG_FIDO2) != 0 {
+        if container.len() < after_policy_offset + 4 {
+            return Err(Error::Format(
+                "container hardware token header truncated".into(),
+            ));
+        }
+        let fido2_len = u32::from_le_bytes(
+            container[after_policy_offset..after_policy_offset + 4]
+                .try_into()
+                .map_err(|_| Error::Format("failed to read hardware token length".into()))?,
+        ) as usize;
+        let fido2_start = after_policy_offset + 4;
+        let fido2_end = fido2_start
+            .checked_add(fido2_len)
+            .ok_or_else(|| Error::Format("hardware token length integer overflow".into()))?;
+        if container.len() < fido2_end + 16 {
+            return Err(Error::Format(
+                "container truncated within hardware token header or body".into(),
+            ));
+        }
+        let f_bytes = &container[fido2_start..fido2_end];
+        let parsed_fido2 = crate::hardware_token::Fido2Header::from_bytes(f_bytes)?;
+        (Some(parsed_fido2), fido2_end)
+    } else {
+        (None, after_policy_offset)
+    };
+
     let body_len = container.len().saturating_sub(body_offset);
 
     Ok(ContainerInfo {
         version,
         dpapi_bound: (flags & FLAG_DPAPI) != 0,
+        fido2_bound: (flags & FLAG_FIDO2) != 0,
         payload_size: body_len.saturating_sub(16),
         salt_hex,
         decoy_container: false,
         policy,
+        fido2,
     })
 }
 

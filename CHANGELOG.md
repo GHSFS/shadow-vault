@@ -5,6 +5,34 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-10-15
+
+### Added
+- FIDO2 / Windows Hello Hardware Key Credential Binding (`src/hardware_token/`):
+  - Added multi-factor hardware security key binding support conforming to W3C WebAuthn and FIDO2 / CTAP 2.1 PRF (HMAC-secret) specifications.
+  - Decomposed into modular architecture (`src/hardware_token/credential.rs`, `src/hardware_token/provider.rs`, `src/hardware_token/mod.rs`), each under 310 lines.
+  - Hardware Authenticator Device Support:
+    - `usb`: Physical FIDO2 USB/NFC security keys (YubiKey, SoloKey, Nitrokey, Titan Key).
+    - `windows_hello`: Windows Hello platform biometric / PIN authenticators with TPM hardware security module backing.
+    - `virtual`: Software-emulated testing authenticators.
+  - Cryptographic Key Derivation & Wire Integrity:
+    - Added container flag `FLAG_FIDO2 = 0x08`.
+    - Extended wire container header with a 4-byte length-prefixed binary header (`SVHW`, version 1, device type, user presence/verification flags, credential ID, RP ID) protected by IEEE 802.3 CRC-32 checksums and ChaCha20-Poly1305 AEAD additional authenticated data (`aad`).
+    - Derived 32-byte hardware secrets via CTAP2 PRF / HMAC-secret challenge-response from container salt, and combined with Argon2id base key material via `HMAC-SHA256(hardware_secret, b"shadow-vault-fido2-bound:" || base_key_material)`.
+  - CLI Subcommands & Options (`svault fido2`):
+    - `svault fido2 enroll`: enrolls new security keys with custom friendly names, device types, relying party IDs, usernames, and authorization PINs, with local descriptor saving or persistent registry integration.
+    - `svault fido2 list`: lists enrolled credentials in the credential registry with JSON output support.
+    - `svault fido2 test`: executes live challenge-response authenticator assertions and outputs derived secret fingerprints.
+    - `svault fido2 remove`: removes credentials from the registry by name or ID.
+    - `svault fido2 status`: inspects host platform hardware token capabilities (Windows Hello, WebAuthn API DLL, USB HID detection).
+  - Multi-Factor Operations Across Vaults:
+    - Added `--fido2`, `--fido2-cred <path>`, and `--fido2-pin <pin>` across `encrypt`, `decrypt`, and `rotate`.
+    - Seamless 2FA combination: supports Passphrase + FIDO2, Keyfile + FIDO2, and Windows DPAPI + FIDO2.
+    - Added hardware credential binding toggle in `rotate` (`--fido2` to bind, `--no-fido2` to unbind) with time-lock preservation.
+  - Proactive `Zeroize` memory wiping on sensitive PRF seeds and effective key material.
+- Dedicated Domain Integration Test Suite (`tests/hardware_token_test.rs`):
+  - 11 comprehensive integration tests covering hardware capabilities inspection, credential enrollment, PIN authorization, assertion testing, basic & 2FA keyfile roundtrips, wrong credential rejection, tamper rejection, rotation lifecycle, and CLI JSON outputs (100% pass, 515 lines).
+
 ## [0.21.0] - 2026-10-14
 
 ### Added

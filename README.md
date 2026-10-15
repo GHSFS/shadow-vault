@@ -40,7 +40,8 @@
 17. **Container Re-Key & Passphrase Rotation (`rotate`, `src/rotate.rs`)** — re-encrypts `.svault` containers and stego carriers (PNG, BMP, WAV, MP3, ASCII armor) with fresh CSPRNG salt and nonce, new passphrases or keyfiles, optional Windows DPAPI hardware binding toggles (`--dpapi`/`--no-dpapi`), temporal policy preservation or stripping (`--clear-policy`), and crash-resilient atomic file replacement (`svault rotate`).
 18. **Detached Integrity Manifest & Canary Verification (`canary`, `src/canary.rs`)** — generates and verifies signed SHA-256 tamper canaries across directory trees of vaults and carriers (`svault canary init` / `svault canary verify`). Features multi-carrier format detection, optional Argon2id + HMAC-SHA256 signature authentication, constant-time verification, missing/modified/untracked anomaly reports, and machine-readable JSON output.
 19. **MP3 ID3v2 & Audio Frame Steganography Engine (`src/mp3/`)** — provides robust steganographic embedding inside MPEG Audio Layer III files with ID3v2 PRIV private tag frame embedding, MPEG inter-frame padding embedding, transparent auto-detection, decoy plausible deniability, and carrier capacity estimation (`svault embed-mp3` / `svault extract-mp3`).
-20. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
+20. **FIDO2 & Windows Hello Hardware Key Credential Binding (`src/hardware_token/`)** — binds container encryption keys to physical FIDO2 USB security keys (YubiKey, SoloKey, Nitrokey, Titan Key), Windows Hello platform biometric credentials (TPM-backed), or virtual security tokens (`--fido2`, `--fido2-cred`, `--fido2-pin`). Cryptographically mixes the CTAP2 PRF (HMAC-secret) 32-byte secret with Argon2id base key material via domain-separated HMAC-SHA256, authenticating binary wire headers (`SVHW`) and CRC-32 integrity tags into ChaCha20-Poly1305 AEAD additional authenticated data (`aad`). Supports credential enrollment, registry management, assertion verification, and container rotation lifecycle (`svault fido2 enroll`, `svault fido2 list`, `svault fido2 test`, `svault fido2 remove`, `svault fido2 status`).
+21. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
 ### Features
 
@@ -390,6 +391,32 @@ svault repl -v myvault.svault -p "session-pass" --exec "get api_key --clip --cli
 # 63. Open REPL in read-only mode or export key-value entries to JSON
 svault repl -v myvault.svault -p "session-pass" --readonly --exec "list" --json
 svault repl -v myvault.svault -p "session-pass" --exec "export ./backup.json; exit"
+
+# 64. Inspect host platform hardware token capabilities (Windows Hello, WebAuthn API, USB HID)
+svault fido2 status
+svault fido2 status --json
+
+# 65. Enroll FIDO2 USB key or Windows Hello credential
+svault fido2 enroll yubikey-5c --type usb --user alice --output ./yubikey.json
+svault fido2 enroll hello-tpm --type hello --pin 849201 --json
+
+# 66. Test authenticator assertion and verify PRF derivation fingerprint
+svault fido2 test ./yubikey.json
+svault fido2 test ./yubikey.json --json
+
+# 67. Encrypt container with FIDO2 hardware credential binding + passphrase
+svault encrypt -i secret.txt -o sealed.svault --fido2-cred ./yubikey.json -p "master-pass"
+
+# 68. Decrypt container using enrolled hardware credential
+svault decrypt -i sealed.svault -o restored.txt --fido2-cred ./yubikey.json -p "master-pass"
+
+# 69. Multi-factor 2FA: Keyfile + FIDO2 physical token without passphrase
+svault encrypt -i secret.txt -o mfa.svault -k usb_token.key --fido2-cred ./yubikey.json
+svault decrypt -i mfa.svault -o restored.txt -k usb_token.key --fido2-cred ./yubikey.json
+
+# 70. Re-key existing container to bind or unbind FIDO2 hardware credentials
+svault rotate -i sealed.svault --in-place -p "old-pass" -n "new-pass" --fido2 --fido2-cred ./yubikey.json
+svault rotate -i sealed.svault --in-place -p "new-pass" -n "plain-pass" --no-fido2 --fido2-cred ./yubikey.json
 ```
 
 ### License & Attribution
@@ -430,7 +457,8 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
 17. **컨테이너 키 교체 및 비밀번호 회전 (`rotate`, `src/rotate.rs`)** — 기존 `.svault` 컨테이너 또는 스테가노그래피 캐리어(PNG, BMP, WAV, MP3, ASCII 아머)를 새로운 비밀번호나 키파일로 재암호화(`svault rotate`)합니다. 매 회전마다 독립적인 16바이트 솔트와 12바이트 논스를 생성하고, Windows DPAPI 하드웨어 귀속 설정 변경(`--dpapi`/`--no-dpapi`), 시간 잠금/만료 정책 보존 또는 제거(`--clear-policy`), 원자적 임시 파일 치환을 지원합니다.
 18. **분리형 무결성 매니페스트 및 카나리 검증 (`canary`, `src/canary.rs`)** — 볼트 및 스테가노그래피 캐리어 디렉터리의 변조 여부를 모니터링하는 서명된 SHA-256 카나리 매니페스트를 생성하고 검증(`svault canary init` / `svault canary verify`)합니다. 다중 캐리어 포맷 자동 식별, Argon2id + HMAC-SHA256 서명 인증, 상수 시간 서명 검증, 수정/삭제/미추적 이상 탐지 및 구조화 JSON 출력을 지원합니다.
 19. **MP3 ID3v2 & 오디오 프레임 스테가노그래피 엔진 (`src/mp3/`)** — MPEG Audio Layer III 파일 내부에 ID3v2 PRIV 비공개 태그 프레임 은닉, MPEG 프레임 간 패딩 은닉, 투명한 자동 감지, 미끼 금고 그럴듯한 부인 및 캐리어 용량 산출을 제공합니다 (`svault embed-mp3` / `svault extract-mp3`).
-20. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
+20. **FIDO2 & Windows Hello 하드웨어 키 자격증명 바인딩 (`src/hardware_token/`)** — 물리적 FIDO2 USB 보안 키(YubiKey, SoloKey, Nitrokey 등), Windows Hello 생체 인증(TPM 연동), 가상 토큰을 컨테이너 암호화 키에 결합(`--fido2`, `--fido2-cred`, `--fido2-pin`)합니다. W3C WebAuthn 및 CTAP 2.1 PRF (HMAC-secret) 규격을 준수하여 하드웨어 시크릿을 Argon2id 기본 키와 도메인 분리 HMAC-SHA256으로 혼합하고, 전용 바이너리 와이어 헤더(`SVHW`)와 CRC-32 무결성 태그를 ChaCha20-Poly1305 AAD로 검증합니다. 자격증명 등록, 목록, 검증, 삭제 및 회전(`svault fido2`)을 지원합니다.
+21. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
 ### 주요 기능
 
@@ -733,6 +761,32 @@ svault repl -v myvault.svault -p "금고비밀번호" --exec "get api_key --clip
 # 58. 읽기 전용 감사 모드 및 JSON 내보내기
 svault repl -v myvault.svault -p "금고비밀번호" --readonly --exec "list" --json
 svault repl -v myvault.svault -p "금고비밀번호" --exec "export ./backup.json; exit"
+
+# 59. 호스트 플랫폼 하드웨어 토큰 및 WebAuthn API 지원 현황 조회
+svault fido2 status
+svault fido2 status --json
+
+# 60. FIDO2 USB 키 또는 Windows Hello 자격증명 등록
+svault fido2 enroll yubikey-5c --type usb --user alice --output ./yubikey.json
+svault fido2 enroll hello-tpm --type hello --pin 849201 --json
+
+# 61. 인증자 어서션 및 PRF 유도 시크릿 지문 검증
+svault fido2 test ./yubikey.json
+svault fido2 test ./yubikey.json --json
+
+# 62. FIDO2 하드웨어 자격증명 결합 컨테이너 암호화
+svault encrypt -i secret.txt -o sealed.svault --fido2-cred ./yubikey.json -p "마스터비밀번호"
+
+# 63. 등록된 하드웨어 자격증명으로 컨테이너 복호화
+svault decrypt -i sealed.svault -o restored.txt --fido2-cred ./yubikey.json -p "마스터비밀번호"
+
+# 64. 2FA 다중 요소 인증: 키파일 + FIDO2 물리 토큰 (비밀번호 불필요)
+svault encrypt -i secret.txt -o mfa.svault -k usb_token.key --fido2-cred ./yubikey.json
+svault decrypt -i mfa.svault -o restored.txt -k usb_token.key --fido2-cred ./yubikey.json
+
+# 65. 기존 컨테이너의 FIDO2 하드웨어 자격증명 바인딩 추가 및 해제 회전
+svault rotate -i sealed.svault --in-place -p "기존비밀번호" -n "신규비밀번호" --fido2 --fido2-cred ./yubikey.json
+svault rotate -i sealed.svault --in-place -p "신규비밀번호" -n "일반비밀번호" --no-fido2 --fido2-cred ./yubikey.json
 ```
 
 ### 저작권 및 라이선스

@@ -34,4 +34,7 @@ pub enum Error {
 
     #[error("repl error: {0}")]
     Repl(String),
+
+    #[error("hardware token error: {0}")]
+    HardwareToken(String),
 }

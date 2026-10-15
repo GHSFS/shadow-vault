@@ -14,6 +14,7 @@ mod decoy;
 mod diff;
 mod error;
 mod guard;
+mod hardware_token;
 mod keyfile;
 mod mp3;
 mod passgen;
@@ -30,7 +31,8 @@ mod wav;
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{
-    CanaryAction, Cli, ClipAction, Commands, GuardAction, KeyfileAction, StreamAction, TotpAction,
+    CanaryAction, Cli, ClipAction, Commands, Fido2Action, GuardAction, KeyfileAction, StreamAction,
+    TotpAction,
 };
 use colored::Colorize;
 use std::fs;
@@ -163,6 +165,9 @@ fn execute_standard_decrypt(
     passphrase: Option<String>,
     keyfile: Option<std::path::PathBuf>,
     decoy_passphrase: Option<String>,
+    fido2: bool,
+    fido2_cred: Option<std::path::PathBuf>,
+    fido2_pin: Option<String>,
     clip: bool,
     clip_ttl: u64,
     at_time: Option<String>,
@@ -205,15 +210,19 @@ fn execute_standard_decrypt(
                 keyfile.as_deref(),
                 None,
             )?)
-        } else if passphrase.is_some() || keyfile.is_some() {
-            Ok(crypto::open_at_with_keyfile(
+        } else if passphrase.is_some() || keyfile.is_some() || fido2 || fido2_cred.is_some() {
+            Ok(crypto::open_at_with_fido2(
                 &container,
                 passphrase.as_deref(),
                 keyfile.as_deref(),
+                fido2_cred.as_deref(),
+                fido2_pin.as_deref(),
                 at_time_val,
             )?)
         } else {
-            anyhow::bail!("either --passphrase, --keyfile, or --decoy-passphrase must be provided");
+            anyhow::bail!(
+                "either --passphrase, --keyfile, --fido2, or --decoy-passphrase must be provided"
+            );
         }
     })();
 
@@ -306,6 +315,9 @@ fn main() -> Result<()> {
             max_attempts,
             dead_man,
             guard_companion,
+            fido2,
+            fido2_cred,
+            fido2_pin,
             json,
         } => {
             let policy = parse_cli_policy(
@@ -394,12 +406,22 @@ fn main() -> Result<()> {
                     padding,
                 )?
             } else {
-                crypto::seal_with_policy_and_keyfile(
+                let fido2_cred_obj = if fido2 || fido2_cred.is_some() {
+                    Some(hardware_token::resolve_credential(
+                        fido2_cred.as_deref(),
+                        None,
+                    )?)
+                } else {
+                    None
+                };
+                crypto::seal_with_fido2(
                     &raw,
                     passphrase.as_deref(),
                     keyfile.as_deref(),
                     dpapi,
                     policy.as_ref(),
+                    fido2_cred_obj.as_ref(),
+                    fido2_pin.as_deref(),
                 )?
             };
             fs::write(&output, &sealed)
@@ -446,6 +468,7 @@ fn main() -> Result<()> {
                     "plaintext_bytes": raw.len(),
                     "ciphertext_bytes": sealed.len(),
                     "dpapi_bound": dpapi,
+                    "fido2_bound": fido2 || fido2_cred.is_some(),
                     "version": sealed.get(4).copied().unwrap_or(1),
                     "stream": false,
                     "guard_armed": guard_info.is_some(),
@@ -460,11 +483,12 @@ fn main() -> Result<()> {
                     None => String::new(),
                 };
                 println!(
-                    "{} encrypted {} bytes -> {} (dpapi={}{})",
+                    "{} encrypted {} bytes -> {} (dpapi={}, fido2={}{})",
                     "ok".green().bold(),
                     raw.len(),
                     output.display(),
                     dpapi,
+                    fido2 || fido2_cred.is_some(),
                     policy_msg
                 );
             }
@@ -525,6 +549,9 @@ fn main() -> Result<()> {
             passphrase,
             keyfile,
             decoy_passphrase,
+            fido2,
+            fido2_cred,
+            fido2_pin,
             clip,
             clip_ttl,
             at_time,
@@ -591,6 +618,9 @@ fn main() -> Result<()> {
                 passphrase,
                 keyfile,
                 decoy_passphrase,
+                fido2,
+                fido2_cred,
+                fido2_pin,
                 clip,
                 clip_ttl,
                 at_time,
@@ -614,6 +644,9 @@ fn main() -> Result<()> {
                 passphrase,
                 keyfile,
                 decoy_passphrase,
+                false,
+                None,
+                None,
                 clip,
                 clip_ttl,
                 at_time,
@@ -1803,6 +1836,19 @@ fn main() -> Result<()> {
                 if let Some(ref inf) = info {
                     out["container_version"] = serde_json::json!(inf.version);
                     out["dpapi_bound"] = serde_json::json!(inf.dpapi_bound);
+                    out["fido2_bound"] = serde_json::json!(inf.fido2_bound);
+                    if let Some(ref f) = inf.fido2 {
+                        let cred_hex = f
+                            .credential_id
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<String>();
+                        out["fido2"] = serde_json::json!({
+                            "device_type": f.device_type.as_str(),
+                            "rp_id": f.rp_id,
+                            "credential_id_hex": cred_hex,
+                        });
+                    }
                     out["payload_bytes"] = serde_json::json!(inf.payload_size);
                     out["salt_hex"] = serde_json::json!(inf.salt_hex);
                     out["decoy_container"] = serde_json::json!(inf.decoy_container);
@@ -1840,6 +1886,17 @@ fn main() -> Result<()> {
                     let info = crypto::inspect(&container)?;
                     println!("container_version: {}", info.version);
                     println!("dpapi_bound:       {}", info.dpapi_bound);
+                    println!("fido2_bound:       {}", info.fido2_bound);
+                    if let Some(ref f) = info.fido2 {
+                        let cred_hex = f
+                            .credential_id
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<String>();
+                        println!("fido2_device:      {}", f.device_type.as_str());
+                        println!("fido2_rp_id:       {}", f.rp_id);
+                        println!("fido2_cred_id:     {}", cred_hex);
+                    }
                     println!("payload_bytes:     {}", info.payload_size);
                     println!("salt_hex:          {}", info.salt_hex);
                     if info.decoy_container {
@@ -2414,6 +2471,9 @@ fn main() -> Result<()> {
         Commands::Guard { action } => {
             handle_guard_command(action)?;
         }
+        Commands::Fido2 { action } => {
+            handle_fido2_command(action)?;
+        }
         Commands::Keygen {
             words,
             separator,
@@ -2481,6 +2541,10 @@ fn main() -> Result<()> {
             dpapi,
             no_dpapi,
             clear_policy,
+            fido2,
+            no_fido2,
+            fido2_cred,
+            fido2_pin,
             json,
         } => {
             let out_target = if in_place {
@@ -2491,11 +2555,15 @@ fn main() -> Result<()> {
                 anyhow::bail!("either --output or --in-place must be specified");
             };
 
-            if old_passphrase.is_none() && old_keyfile.is_none() {
-                anyhow::bail!("either --old-passphrase or --old-keyfile must be provided");
+            if old_passphrase.is_none() && old_keyfile.is_none() && !fido2 && fido2_cred.is_none() {
+                anyhow::bail!(
+                    "either --old-passphrase, --old-keyfile, or --fido2 must be provided"
+                );
             }
-            if new_passphrase.is_none() && new_keyfile.is_none() {
-                anyhow::bail!("either --new-passphrase or --new-keyfile must be provided");
+            if new_passphrase.is_none() && new_keyfile.is_none() && !fido2 && fido2_cred.is_none() {
+                anyhow::bail!(
+                    "either --new-passphrase, --new-keyfile, or --fido2 must be provided"
+                );
             }
 
             let opts = rotate::RotateOptions {
@@ -2506,6 +2574,10 @@ fn main() -> Result<()> {
                 dpapi,
                 no_dpapi,
                 clear_policy,
+                fido2,
+                no_fido2,
+                fido2_cred: fido2_cred.as_deref(),
+                fido2_pin: fido2_pin.as_deref(),
             };
 
             check_guard_preflight(&input, None)?;
@@ -2531,7 +2603,7 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 println!(
-                    "{} rotated {} ({}) -> {} [payload: {} bytes, dpapi: {} -> {}, policy_preserved: {}, policy_cleared: {}]",
+                    "{} rotated {} ({}) -> {} [payload: {} bytes, dpapi: {} -> {}, fido2: {} -> {}, policy_preserved: {}, policy_cleared: {}]",
                     "ok".green().bold(),
                     report.input_path,
                     report.carrier_type,
@@ -2539,6 +2611,8 @@ fn main() -> Result<()> {
                     report.payload_bytes,
                     report.old_dpapi_bound,
                     report.new_dpapi_bound,
+                    report.old_fido2_bound,
+                    report.new_fido2_bound,
                     report.policy_preserved,
                     report.policy_cleared,
                 );
@@ -4134,6 +4208,197 @@ fn handle_guard_command(action: GuardAction) -> Result<()> {
                         );
                     }
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_fido2_command(action: Fido2Action) -> Result<()> {
+    match action {
+        Fido2Action::Enroll {
+            name,
+            device_type,
+            rp_id,
+            user,
+            pin,
+            output,
+            json,
+        } => {
+            let dev_type: hardware_token::Fido2DeviceType = device_type.parse()?;
+            let cred = hardware_token::enroll_credential(
+                &name,
+                dev_type,
+                rp_id.as_deref(),
+                user.as_deref(),
+                pin.as_deref(),
+                output.as_deref(),
+            )?;
+            let saved_dest = output.map(|p| p.display().to_string()).unwrap_or_else(|| {
+                hardware_token::default_registry_path()
+                    .display()
+                    .to_string()
+            });
+
+            if json {
+                let rep = hardware_token::Fido2EnrollReport {
+                    status: "ok".into(),
+                    command: "fido2 enroll".into(),
+                    credential_id: cred.id,
+                    name: cred.name,
+                    device_type: cred.device_type.as_str().into(),
+                    rp_id: cred.rp_id,
+                    user_name: cred.user_name,
+                    saved_to: saved_dest,
+                };
+                println!("{}", serde_json::to_string_pretty(&rep)?);
+            } else {
+                println!(
+                    "{} enrolled hardware credential '{}' [{}] (id: {}) -> {}",
+                    "ok".green().bold(),
+                    cred.name,
+                    cred.device_type.as_str(),
+                    cred.id,
+                    saved_dest
+                );
+            }
+        }
+        Fido2Action::List { registry, json } => {
+            let reg_path = registry.unwrap_or_else(hardware_token::default_registry_path);
+            let creds = hardware_token::load_registry(&reg_path)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&creds)?);
+            } else {
+                println!(
+                    "{}",
+                    "=== [ENROLLED FIDO2 / BIOMETRIC CREDENTIALS] ===".bold()
+                );
+                if creds.is_empty() {
+                    println!("  (no hardware credentials enrolled in registry)");
+                } else {
+                    println!(
+                        "  {:<18} {:<15} {:<18} {:<24}",
+                        "NAME", "DEVICE", "RP_ID", "CREDENTIAL_ID"
+                    );
+                    println!("  {}", "-".repeat(80));
+                    for c in &creds {
+                        println!(
+                            "  {:<18} {:<15} {:<18} {:<24}",
+                            c.name,
+                            c.device_type.as_str(),
+                            c.rp_id,
+                            c.id
+                        );
+                    }
+                }
+            }
+        }
+        Fido2Action::Test {
+            credential,
+            pin,
+            json,
+        } => {
+            let cred = if let Some(ref target) = credential {
+                let path = Path::new(target);
+                if path.exists() {
+                    hardware_token::Fido2Credential::load_from_file(path)?
+                } else {
+                    let reg_path = hardware_token::default_registry_path();
+                    let list = hardware_token::load_registry(&reg_path)?;
+                    list.into_iter()
+                        .find(|c| c.name == *target || c.id.eq_ignore_ascii_case(target))
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("credential '{}' not found in registry", target)
+                        })?
+                }
+            } else {
+                let reg_path = hardware_token::default_registry_path();
+                let list = hardware_token::load_registry(&reg_path)?;
+                list.into_iter().next().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "no credentials found in registry to test. Enroll one with 'svault fido2 enroll'"
+                    )
+                })?
+            };
+
+            let challenge = b"shadow-vault-assertion-test-challenge";
+            let verified =
+                hardware_token::verify_hardware_assertion(&cred, challenge, pin.as_deref())?;
+            let secret = hardware_token::derive_hardware_secret(&cred, challenge, pin.as_deref())?;
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(secret.as_slice());
+            let fp = hasher.finalize();
+            let fp_hex: String = fp.iter().map(|b| format!("{b:02x}")).collect();
+
+            if json {
+                let rep = hardware_token::Fido2TestReport {
+                    status: "ok".into(),
+                    command: "fido2 test".into(),
+                    credential_id: cred.id,
+                    name: cred.name,
+                    device_type: cred.device_type.as_str().into(),
+                    verified,
+                    derived_secret_fingerprint: fp_hex,
+                };
+                println!("{}", serde_json::to_string_pretty(&rep)?);
+            } else {
+                println!(
+                    "{} authenticator assertion verified for '{}' [{}] (prf_fingerprint: {})",
+                    "ok".green().bold(),
+                    cred.name,
+                    cred.device_type.as_str(),
+                    fp_hex
+                );
+            }
+        }
+        Fido2Action::Remove {
+            identifier,
+            registry,
+            json,
+        } => {
+            let removed = hardware_token::remove_credential(&identifier, registry.as_deref())?;
+            if json {
+                let out = serde_json::json!({
+                    "status": if removed { "ok" } else { "warning" },
+                    "command": "fido2 remove",
+                    "identifier": identifier,
+                    "removed": removed,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else if removed {
+                println!(
+                    "{} removed credential '{}' from registry",
+                    "ok".green().bold(),
+                    identifier
+                );
+            } else {
+                println!(
+                    "{} credential '{}' not found in registry",
+                    "warning:".yellow().bold(),
+                    identifier
+                );
+            }
+        }
+        Fido2Action::Status { json } => {
+            let status = hardware_token::detect_hardware_capabilities();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&status)?);
+            } else {
+                println!(
+                    "{}",
+                    "=== [HARDWARE TOKEN & WEBAUTHN CAPABILITIES] ===".bold()
+                );
+                println!(
+                    "  Windows Hello Supported: {}",
+                    status.windows_hello_supported
+                );
+                println!(
+                    "  WebAuthN DLL Available:  {}",
+                    status.webauthn_dll_available
+                );
+                println!("  FIDO2 USB Keys Supported:{}", status.usb_fido2_detected);
+                println!("  Active Default Engine:   {}", status.active_device_type);
             }
         }
     }

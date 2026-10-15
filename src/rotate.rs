@@ -15,16 +15,11 @@
 
 use crate::armor;
 use crate::bmp;
-use crate::crypto::{
-    self, FLAG_DECOY, FLAG_DPAPI, FLAG_POLICY, HEADER_LEN, MAGIC, SALT_LEN, VERSION, VERSION_V2,
-};
+use crate::crypto::{self, FLAG_DECOY, HEADER_LEN, MAGIC, SALT_LEN, VERSION, VERSION_V2};
 use crate::error::{Error, Result};
 use crate::mp3;
-use crate::policy::PolicyHeader;
 use crate::stego;
 use crate::wav;
-use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -41,6 +36,10 @@ pub struct RotateOptions<'a> {
     pub dpapi: bool,
     pub no_dpapi: bool,
     pub clear_policy: bool,
+    pub fido2: bool,
+    pub no_fido2: bool,
+    pub fido2_cred: Option<&'a Path>,
+    pub fido2_pin: Option<&'a str>,
 }
 
 /// Internal cryptographic result from re-encrypting a container payload.
@@ -50,6 +49,8 @@ pub struct RotateResult {
     pub payload_bytes: usize,
     pub old_dpapi_bound: bool,
     pub new_dpapi_bound: bool,
+    pub old_fido2_bound: bool,
+    pub new_fido2_bound: bool,
     pub policy_preserved: bool,
     pub policy_cleared: bool,
     pub new_salt_hex: String,
@@ -67,6 +68,8 @@ pub struct RotateReport {
     pub payload_bytes: usize,
     pub old_dpapi_bound: bool,
     pub new_dpapi_bound: bool,
+    pub old_fido2_bound: bool,
+    pub new_fido2_bound: bool,
     pub policy_preserved: bool,
     pub policy_cleared: bool,
     pub new_salt_hex: String,
@@ -141,64 +144,39 @@ pub fn rotate_container(container: &[u8], options: &RotateOptions) -> Result<Rot
         ));
     }
 
-    let old_dpapi_bound = (flags & FLAG_DPAPI) != 0;
-    let old_salt = &container[6..6 + SALT_LEN];
-    let old_nonce = &container[6 + SALT_LEN..HEADER_LEN];
+    let info = crypto::inspect(container)?;
+    let old_dpapi_bound = info.dpapi_bound;
+    let old_fido2_bound = info.fido2_bound;
 
-    let (policy_wire, body_offset, old_policy) = if (flags & FLAG_POLICY) != 0 {
-        if container.len() < HEADER_LEN + 4 {
-            return Err(Error::Format("container policy header truncated".into()));
-        }
-        let policy_len = u32::from_le_bytes(
-            container[HEADER_LEN..HEADER_LEN + 4]
-                .try_into()
-                .map_err(|_| Error::Format("failed to read policy length".into()))?,
-        ) as usize;
-        let policy_start = HEADER_LEN + 4;
-        let policy_end = policy_start
-            .checked_add(policy_len)
-            .ok_or_else(|| Error::Format("policy length integer overflow".into()))?;
-        if container.len() < policy_end + 16 {
-            return Err(Error::Format(
-                "container truncated within policy or body".into(),
-            ));
-        }
-        let p_bytes = &container[policy_start..policy_end];
-        let parsed = PolicyHeader::from_bytes(p_bytes)?;
-        (Some(p_bytes), policy_end, Some(parsed))
+    let (old_cred_param, old_pin_param) = if old_fido2_bound {
+        (options.fido2_cred, options.fido2_pin)
     } else {
-        (None, HEADER_LEN, None)
+        (None, None)
     };
 
-    let body = &container[body_offset..];
-    let ciphertext = if old_dpapi_bound {
-        crypto::dpapi_unprotect(body)?
+    let at_time = if let Some(ref pol) = info.policy {
+        if let Some(nb) = pol.not_before {
+            let now = crate::policy::current_utc_timestamp();
+            if now < nb {
+                Some(nb)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     } else {
-        body.to_vec()
+        None
     };
 
-    let old_key_material =
-        crypto::resolve_key_material(options.old_passphrase, options.old_keyfile)?;
-    let old_key = crypto::derive_key(&old_key_material, old_salt)?;
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&*old_key));
-    let nonce = Nonce::from_slice(old_nonce);
-
-    let mut plaintext = Zeroizing::new(match policy_wire {
-        Some(pw) => {
-            let payload = Payload {
-                msg: ciphertext.as_ref(),
-                aad: pw,
-            };
-            cipher.decrypt(nonce, payload).map_err(|_| {
-                Error::Crypto(
-                    "authentication failed — wrong passphrase or tampered container/policy".into(),
-                )
-            })?
-        }
-        None => cipher.decrypt(nonce, ciphertext.as_ref()).map_err(|_| {
-            Error::Crypto("authentication failed — wrong passphrase or tampered container".into())
-        })?,
-    });
+    let mut plaintext = Zeroizing::new(crypto::open_at_with_fido2(
+        container,
+        options.old_passphrase,
+        options.old_keyfile,
+        old_cred_param,
+        old_pin_param,
+        at_time,
+    )?);
 
     let payload_bytes = plaintext.len();
 
@@ -210,19 +188,36 @@ pub fn rotate_container(container: &[u8], options: &RotateOptions) -> Result<Rot
         old_dpapi_bound
     };
 
-    let (new_policy, policy_preserved, policy_cleared) = if options.clear_policy {
-        (None, false, old_policy.is_some())
+    let (new_fido2_cred, new_fido2_bound) = if options.fido2 {
+        let cred = crate::hardware_token::resolve_credential(options.fido2_cred, None)?;
+        (Some(cred), true)
+    } else if options.no_fido2 {
+        (None, false)
+    } else if old_fido2_bound {
+        let cred = crate::hardware_token::resolve_credential(
+            options.fido2_cred,
+            info.fido2.as_ref().map(|h| h.credential_id.as_slice()),
+        )?;
+        (Some(cred), true)
     } else {
-        let preserved = old_policy.is_some();
-        (old_policy.as_ref(), preserved, false)
+        (None, false)
     };
 
-    let new_container = crypto::seal_with_policy_and_keyfile(
+    let (new_policy, policy_preserved, policy_cleared) = if options.clear_policy {
+        (None, false, info.policy.is_some())
+    } else {
+        let preserved = info.policy.is_some();
+        (info.policy.as_ref(), preserved, false)
+    };
+
+    let new_container = crypto::seal_with_fido2(
         &plaintext,
         options.new_passphrase,
         options.new_keyfile,
         new_dpapi_bound,
         new_policy,
+        new_fido2_cred.as_ref(),
+        options.fido2_pin,
     )?;
 
     // Proactively zeroize decrypted plaintext buffer
@@ -239,6 +234,8 @@ pub fn rotate_container(container: &[u8], options: &RotateOptions) -> Result<Rot
         payload_bytes,
         old_dpapi_bound,
         new_dpapi_bound,
+        old_fido2_bound,
+        new_fido2_bound,
         policy_preserved,
         policy_cleared,
         new_salt_hex,
@@ -320,6 +317,8 @@ pub fn rotate_carrier_file(
         payload_bytes: res.payload_bytes,
         old_dpapi_bound: res.old_dpapi_bound,
         new_dpapi_bound: res.new_dpapi_bound,
+        old_fido2_bound: res.old_fido2_bound,
+        new_fido2_bound: res.new_fido2_bound,
         policy_preserved: res.policy_preserved,
         policy_cleared: res.policy_cleared,
         new_salt_hex: res.new_salt_hex,

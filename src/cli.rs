@@ -90,6 +90,18 @@ pub enum Commands {
         #[arg(long = "guard-companion")]
         guard_companion: bool,
 
+        /// Bind container encryption key to FIDO2 / Windows Hello hardware token
+        #[arg(long = "fido2")]
+        fido2: bool,
+
+        /// Path to specific FIDO2 credential descriptor file
+        #[arg(long = "fido2-cred")]
+        fido2_cred: Option<PathBuf>,
+
+        /// Optional PIN for FIDO2 hardware authenticator
+        #[arg(long = "fido2-pin")]
+        fido2_pin: Option<String>,
+
         /// Output operation summary in structured JSON format
         #[arg(long)]
         json: bool,
@@ -173,6 +185,18 @@ pub enum Commands {
         /// Explicit streaming container decryption mode
         #[arg(long = "stream")]
         stream: bool,
+
+        /// Decrypt using enrolled FIDO2 / Windows Hello hardware authenticator
+        #[arg(long = "fido2")]
+        fido2: bool,
+
+        /// Path to specific FIDO2 credential descriptor file
+        #[arg(long = "fido2-cred")]
+        fido2_cred: Option<PathBuf>,
+
+        /// Optional PIN for FIDO2 hardware authenticator
+        #[arg(long = "fido2-pin")]
+        fido2_pin: Option<String>,
 
         /// Output operation summary in structured JSON format
         #[arg(long)]
@@ -1130,6 +1154,22 @@ pub enum Commands {
         #[arg(long = "clear-policy")]
         clear_policy: bool,
 
+        /// Explicitly bind rotated container with FIDO2 / Windows Hello hardware protection
+        #[arg(long = "fido2", conflicts_with = "no_fido2")]
+        fido2: bool,
+
+        /// Explicitly remove FIDO2 hardware token binding
+        #[arg(long = "no-fido2", conflicts_with = "fido2")]
+        no_fido2: bool,
+
+        /// Path to new FIDO2 credential descriptor file for rotated container
+        #[arg(long = "fido2-cred")]
+        fido2_cred: Option<PathBuf>,
+
+        /// Optional PIN for FIDO2 hardware authenticator
+        #[arg(long = "fido2-pin")]
+        fido2_pin: Option<String>,
+
         /// Output rotation summary in structured JSON format
         #[arg(long)]
         json: bool,
@@ -1176,6 +1216,17 @@ pub enum Commands {
         /// Output operation results in structured JSON format
         #[arg(long)]
         json: bool,
+    },
+
+    /// Manage FIDO2 USB keys and Windows Hello biometric hardware credentials
+    #[command(
+        name = "fido2",
+        visible_alias = "hardware-token",
+        visible_alias = "hw-key"
+    )]
+    Fido2 {
+        #[command(subcommand)]
+        action: Fido2Action,
     },
 }
 
@@ -1731,6 +1782,93 @@ pub enum CanaryAction {
         strict: bool,
 
         /// Output verification report in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Fido2Action {
+    /// Enroll a new FIDO2 USB key, Windows Hello biometric token, or virtual authenticator
+    #[command(name = "enroll", visible_alias = "register", visible_alias = "add")]
+    Enroll {
+        /// Friendly name for the credential (e.g. 'yubikey-5c', 'windows-hello')
+        #[arg(value_name = "NAME")]
+        name: String,
+
+        /// Authenticator device type (usb, hello, or virtual; default: usb)
+        #[arg(short = 't', long = "type", default_value = "usb")]
+        device_type: String,
+
+        /// Relying party ID (defaults to 'shadow-vault')
+        #[arg(long = "rp-id")]
+        rp_id: Option<String>,
+
+        /// User entity name (defaults to 'vault-operator')
+        #[arg(short = 'u', long = "user")]
+        user: Option<String>,
+
+        /// Optional PIN for multi-factor authenticator authorization
+        #[arg(long = "pin")]
+        pin: Option<String>,
+
+        /// Optional custom path to save the credential descriptor file
+        #[arg(short = 'o', long = "output")]
+        output: Option<PathBuf>,
+
+        /// Output enrollment result in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List all enrolled FIDO2 / Windows Hello hardware credentials in registry
+    #[command(name = "list", visible_alias = "ls")]
+    List {
+        /// Optional path to custom credentials registry file
+        #[arg(short = 'r', long = "registry")]
+        registry: Option<PathBuf>,
+
+        /// Output list in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Test hardware authenticator challenge-response assertion and PRF secret derivation
+    #[command(name = "test", visible_alias = "verify", visible_alias = "check")]
+    Test {
+        /// Credential name, ID, or path to credential descriptor file
+        #[arg(value_name = "CREDENTIAL")]
+        credential: Option<String>,
+
+        /// Optional PIN for authenticator
+        #[arg(long = "pin")]
+        pin: Option<String>,
+
+        /// Output test report in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Remove an enrolled hardware credential from the registry
+    #[command(name = "remove", visible_alias = "rm", visible_alias = "delete")]
+    Remove {
+        /// Credential name or credential ID to remove
+        #[arg(value_name = "IDENTIFIER")]
+        identifier: String,
+
+        /// Optional path to custom credentials registry file
+        #[arg(short = 'r', long = "registry")]
+        registry: Option<PathBuf>,
+
+        /// Output removal result in structured JSON format
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Inspect host platform hardware token capabilities (Windows Hello, WebAuthn, USB HID)
+    #[command(name = "status", visible_alias = "info")]
+    Status {
+        /// Output capabilities in structured JSON format
         #[arg(long)]
         json: bool,
     },

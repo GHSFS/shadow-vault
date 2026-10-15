@@ -621,10 +621,12 @@ pub fn inspect_decoy(container: &[u8]) -> Result<ContainerInfo> {
     Ok(ContainerInfo {
         version,
         dpapi_bound: (flags & FLAG_DPAPI) != 0,
+        fido2_bound: false,
         payload_size: decoy_body_len.saturating_sub(16),
         salt_hex,
         decoy_container: true,
         policy: None,
+        fido2: None,
     })
 }
 

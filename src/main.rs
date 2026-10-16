@@ -19,6 +19,7 @@ mod keyfile;
 mod mp3;
 mod passgen;
 mod policy;
+mod pq_kem;
 mod repl;
 mod rotate;
 mod shamir;
@@ -2473,6 +2474,21 @@ fn main() -> Result<()> {
         }
         Commands::Fido2 { action } => {
             handle_fido2_command(action)?;
+        }
+        Commands::Kem { action } => {
+            pq_kem::cli::handle_kem_command(action)?;
+        }
+        Commands::KemSeal(args) => {
+            pq_kem::cli::handle_kem_seal(args)?;
+        }
+        Commands::KemOpen(args) => {
+            pq_kem::cli::handle_kem_open(args)?;
+        }
+        Commands::KemKeygen(args) => {
+            pq_kem::cli::handle_kem_keygen(args)?;
+        }
+        Commands::KemInspect(args) => {
+            pq_kem::cli::handle_kem_inspect(args)?;
         }
         Commands::Keygen {
             words,

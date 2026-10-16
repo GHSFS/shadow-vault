@@ -4,7 +4,7 @@
 
 [package]
 name = "shadow-vault"
-version = "0.22.0"
+version = "0.23.0"
 edition = "2021"
 
 rust-version = "1.75"
@@ -34,6 +34,8 @@ thiserror = "1"
 anyhow = "1"
 colored = "2"
 zeroize = { version = "1.8", features = ["derive"] }
+x25519-dalek = { version = "2.0", features = ["zeroize", "static_secrets"] }
+ml-kem = { version = "0.3", features = ["zeroize", "alloc"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

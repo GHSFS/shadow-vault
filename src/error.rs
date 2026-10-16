@@ -37,4 +37,7 @@ pub enum Error {
 
     #[error("hardware token error: {0}")]
     HardwareToken(String),
+
+    #[error("post-quantum KEM error: {0}")]
+    Kem(String),
 }

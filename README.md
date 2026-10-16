@@ -41,7 +41,8 @@
 18. **Detached Integrity Manifest & Canary Verification (`canary`, `src/canary.rs`)** — generates and verifies signed SHA-256 tamper canaries across directory trees of vaults and carriers (`svault canary init` / `svault canary verify`). Features multi-carrier format detection, optional Argon2id + HMAC-SHA256 signature authentication, constant-time verification, missing/modified/untracked anomaly reports, and machine-readable JSON output.
 19. **MP3 ID3v2 & Audio Frame Steganography Engine (`src/mp3/`)** — provides robust steganographic embedding inside MPEG Audio Layer III files with ID3v2 PRIV private tag frame embedding, MPEG inter-frame padding embedding, transparent auto-detection, decoy plausible deniability, and carrier capacity estimation (`svault embed-mp3` / `svault extract-mp3`).
 20. **FIDO2 & Windows Hello Hardware Key Credential Binding (`src/hardware_token/`)** — binds container encryption keys to physical FIDO2 USB security keys (YubiKey, SoloKey, Nitrokey, Titan Key), Windows Hello platform biometric credentials (TPM-backed), or virtual security tokens (`--fido2`, `--fido2-cred`, `--fido2-pin`). Cryptographically mixes the CTAP2 PRF (HMAC-secret) 32-byte secret with Argon2id base key material via domain-separated HMAC-SHA256, authenticating binary wire headers (`SVHW`) and CRC-32 integrity tags into ChaCha20-Poly1305 AEAD additional authenticated data (`aad`). Supports credential enrollment, registry management, assertion verification, and container rotation lifecycle (`svault fido2 enroll`, `svault fido2 list`, `svault fido2 test`, `svault fido2 remove`, `svault fido2 status`).
-21. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
+21. **Post-Quantum Hybrid Key Encapsulation (`src/pq_kem/`)** — dual-layer quantum-resistant asymmetric vault sealing combining classical **X25519** elliptic-curve Diffie-Hellman with NIST **FIPS 203 ML-KEM-768** (formerly Kyber-768). Derives symmetric ChaCha20-Poly1305 encryption keys via HKDF-SHA256 with strong domain separation, packaging payloads into authenticated `SVPQ` wire format containers with IEEE 802.3 CRC-32 integrity and PEM-style ASCII armoring (`svault kem keygen`, `svault kem seal`, `svault kem open`, `svault kem inspect`).
+22. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
 ### Features
 
@@ -417,6 +418,22 @@ svault decrypt -i mfa.svault -o restored.txt -k usb_token.key --fido2-cred ./yub
 # 70. Re-key existing container to bind or unbind FIDO2 hardware credentials
 svault rotate -i sealed.svault --in-place -p "old-pass" -n "new-pass" --fido2 --fido2-cred ./yubikey.json
 svault rotate -i sealed.svault --in-place -p "new-pass" -n "plain-pass" --no-fido2 --fido2-cred ./yubikey.json
+
+# 71. Generate a post-quantum hybrid keypair (X25519 + ML-KEM-768)
+svault kem keygen -p recipient.pub -s recipient.key
+svault kem keygen -p recipient.pub -s recipient.key --json
+
+# 72. Seal a confidential file to a recipient public key (raw binary or ASCII armored)
+svault kem seal -i classified.txt -o sealed.svault.pq -k recipient.pub
+svault kem seal -i classified.txt -o sealed.asc -k recipient.pub --armor --json
+
+# 73. Inspect post-quantum container metadata (ephemeral key, ML-KEM ciphertext size, CRC-32)
+svault kem inspect -i sealed.svault.pq
+svault kem inspect -i sealed.asc --json
+
+# 74. Open and decrypt post-quantum sealed vault using recipient private key
+svault kem open -i sealed.svault.pq -o restored.txt -k recipient.key
+svault kem open -i sealed.asc -o restored.txt -k recipient.key --json
 ```
 
 ### License & Attribution
@@ -458,7 +475,8 @@ Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or deriva
 18. **분리형 무결성 매니페스트 및 카나리 검증 (`canary`, `src/canary.rs`)** — 볼트 및 스테가노그래피 캐리어 디렉터리의 변조 여부를 모니터링하는 서명된 SHA-256 카나리 매니페스트를 생성하고 검증(`svault canary init` / `svault canary verify`)합니다. 다중 캐리어 포맷 자동 식별, Argon2id + HMAC-SHA256 서명 인증, 상수 시간 서명 검증, 수정/삭제/미추적 이상 탐지 및 구조화 JSON 출력을 지원합니다.
 19. **MP3 ID3v2 & 오디오 프레임 스테가노그래피 엔진 (`src/mp3/`)** — MPEG Audio Layer III 파일 내부에 ID3v2 PRIV 비공개 태그 프레임 은닉, MPEG 프레임 간 패딩 은닉, 투명한 자동 감지, 미끼 금고 그럴듯한 부인 및 캐리어 용량 산출을 제공합니다 (`svault embed-mp3` / `svault extract-mp3`).
 20. **FIDO2 & Windows Hello 하드웨어 키 자격증명 바인딩 (`src/hardware_token/`)** — 물리적 FIDO2 USB 보안 키(YubiKey, SoloKey, Nitrokey 등), Windows Hello 생체 인증(TPM 연동), 가상 토큰을 컨테이너 암호화 키에 결합(`--fido2`, `--fido2-cred`, `--fido2-pin`)합니다. W3C WebAuthn 및 CTAP 2.1 PRF (HMAC-secret) 규격을 준수하여 하드웨어 시크릿을 Argon2id 기본 키와 도메인 분리 HMAC-SHA256으로 혼합하고, 전용 바이너리 와이어 헤더(`SVHW`)와 CRC-32 무결성 태그를 ChaCha20-Poly1305 AAD로 검증합니다. 자격증명 등록, 목록, 검증, 삭제 및 회전(`svault fido2`)을 지원합니다.
-21. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
+21. **포스트-양자 하이브리드 키 캡슐화 (`src/pq_kem/`)** — 고전 타원곡선 **X25519** 디피-헬만과 NIST **FIPS 203 ML-KEM-768**(구 Kyber-768) 격자 암호학을 결합한 이중 계층 양자 내성 비대칭 볼트 봉인 엔진. HKDF-SHA256 도메인 분리 키 유도를 통해 ChaCha20-Poly1305 대칭키를 도출하고, 전용 `SVPQ` v1 바이너리 컨테이너 및 PEM 스타일 ASCII 아머를 지원합니다 (`svault kem keygen`, `svault kem seal`, `svault kem open`, `svault kem inspect`).
+22. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
 ### 주요 기능
 
@@ -787,6 +805,22 @@ svault decrypt -i mfa.svault -o restored.txt -k usb_token.key --fido2-cred ./yub
 # 65. 기존 컨테이너의 FIDO2 하드웨어 자격증명 바인딩 추가 및 해제 회전
 svault rotate -i sealed.svault --in-place -p "기존비밀번호" -n "신규비밀번호" --fido2 --fido2-cred ./yubikey.json
 svault rotate -i sealed.svault --in-place -p "신규비밀번호" -n "일반비밀번호" --no-fido2 --fido2-cred ./yubikey.json
+
+# 66. 포스트-양자 하이브리드 키쌍 생성 (X25519 + ML-KEM-768)
+svault kem keygen -p recipient.pub -s recipient.key
+svault kem keygen -p recipient.pub -s recipient.key --json
+
+# 67. 수신자 공개키로 양자 내성 볼트 봉인 (원시 바이너리 또는 ASCII 아머)
+svault kem seal -i classified.txt -o sealed.svault.pq -k recipient.pub
+svault kem seal -i classified.txt -o sealed.asc -k recipient.pub --armor --json
+
+# 68. 포스트-양자 컨테이너 메타데이터 검사 (임시 공개키, ML-KEM 암호문 크기, CRC-32)
+svault kem inspect -i sealed.svault.pq
+svault kem inspect -i sealed.asc --json
+
+# 69. 수신자 개인키로 양자 내성 볼트 해제 및 복호화
+svault kem open -i sealed.svault.pq -o restored.txt -k recipient.key
+svault kem open -i sealed.asc -o restored.txt -k recipient.key --json
 ```
 
 ### 저작권 및 라이선스

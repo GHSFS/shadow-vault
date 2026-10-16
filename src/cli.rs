@@ -1228,6 +1228,29 @@ pub enum Commands {
         #[command(subcommand)]
         action: Fido2Action,
     },
+
+    /// Post-Quantum Hybrid Key Encapsulation (X25519 + ML-KEM-768 FIPS 203)
+    #[command(name = "kem", visible_alias = "pq", visible_alias = "mlkem")]
+    Kem {
+        #[command(subcommand)]
+        action: crate::pq_kem::cli::KemSubcommands,
+    },
+
+    /// Seal a file using post-quantum hybrid key encapsulation (alias for 'kem seal')
+    #[command(name = "kem-seal", visible_alias = "pq-seal")]
+    KemSeal(crate::pq_kem::cli::KemSealArgs),
+
+    /// Open a file sealed with post-quantum hybrid key encapsulation (alias for 'kem open')
+    #[command(name = "kem-open", visible_alias = "pq-open")]
+    KemOpen(crate::pq_kem::cli::KemOpenArgs),
+
+    /// Generate a post-quantum hybrid keypair (alias for 'kem keygen')
+    #[command(name = "kem-keygen", visible_alias = "pq-keygen")]
+    KemKeygen(crate::pq_kem::cli::KemKeygenArgs),
+
+    /// Inspect a post-quantum sealed container or key file (alias for 'kem inspect')
+    #[command(name = "kem-inspect", visible_alias = "pq-inspect")]
+    KemInspect(crate::pq_kem::cli::KemInspectArgs),
 }
 
 #[derive(Debug, Subcommand)]

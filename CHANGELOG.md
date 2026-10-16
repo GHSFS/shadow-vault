@@ -5,6 +5,32 @@ All notable changes to `shadow-vault` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0] - 2026-10-16
+
+### Added
+- Post-Quantum Hybrid Key Encapsulation (`src/pq_kem/`):
+  - Added dual-layer post-quantum hybrid key exchange combining classical X25519 elliptic-curve Diffie-Hellman and NIST FIPS 203 ML-KEM-768 (formerly Kyber-768) lattice cryptography for quantum-resistant asymmetric vault sealing.
+  - Decomposed into modular domain architecture (`src/pq_kem/keys.rs`, `src/pq_kem/encapsulate.rs`, `src/pq_kem/container.rs`, `src/pq_kem/mod.rs`, `src/pq_kem/cli.rs`), each strictly under 260 lines.
+  - Hybrid Key Architecture:
+    - `HybridPublicKey`: 1,216 bytes combining 32-byte X25519 public key and 1,184-byte ML-KEM-768 encapsulation key with SHA-256 fingerprinting (`SHA256:<hex>`).
+    - `HybridPrivateKey`: 96 bytes combining 32-byte X25519 private key and 64-byte ML-KEM-768 seed with automatic `ZeroizeOnDrop` memory wiping on sensitive key buffers.
+    - Full ASCII Armoring support for keys (`-----BEGIN SHADOW VAULT KEM PUBLIC KEY-----` and `-----BEGIN SHADOW VAULT KEM PRIVATE KEY-----`).
+  - Dual-Layer Key Derivation:
+    - Encapsulates ephemeral X25519 public key and ML-KEM-768 ciphertext (1,088 bytes).
+    - Derives 32-byte symmetric vault key using HKDF-SHA256 with strong domain separation (`PRK = HMAC-SHA256(salt, ss_classic || ss_pq)`), guaranteeing security even if either classical discrete-logarithm or post-quantum lattice hardness were compromised.
+  - Wire Format & Container Security (`SVPQ` v1):
+    - Container magic `SVPQ`, version 1, flags, ephemeral X25519 public key (32 bytes), ML-KEM-768 ciphertext (1,088 bytes), ChaCha20-Poly1305 nonce (12 bytes), plaintext length (8 bytes), and ChaCha20-Poly1305 AEAD ciphertext with header bound as Additional Authenticated Data (`aad`).
+    - Trailing IEEE 802.3 CRC-32 checksum (4 bytes) validating file integrity prior to AEAD authentication.
+    - PEM ASCII Armoring support for containers (`-----BEGIN SHADOW VAULT PQ CONTAINER-----`), auto-detected on opening.
+  - CLI Subcommands & Tooling (`svault kem`):
+    - `svault kem keygen` (alias: `kem-keygen`): generates post-quantum hybrid keypairs with optional file export and ASCII armoring.
+    - `svault kem seal` (alias: `kem-seal`): seals files against recipient public keys with optional `--armor` export.
+    - `svault kem open` (alias: `kem-open`): opens and decrypts sealed post-quantum vaults using recipient private keys.
+    - `svault kem inspect` (alias: `kem-inspect`): inspects `SVPQ` container headers, reporting format validity, ephemeral key hex, ciphertext lengths, and CRC-32 validation without requiring secret keys.
+    - Full structured JSON output mode (`--json`) across all KEM commands.
+- Dedicated Domain Integration Test Suite (`tests/pq_kem_test.rs`):
+  - 6 comprehensive integration tests covering hybrid key generation and PEM armoring, binary and armored sealing/opening roundtrips, invalid private key authentication failure, tampering and truncation rejection, and structured JSON output mode (100% pass, 382 lines).
+
 ## [0.22.0] - 2026-10-15
 
 ### Added

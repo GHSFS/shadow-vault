@@ -12,13 +12,17 @@
 [![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
 [![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../../LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#البدء-السريع)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#-cli)
 
 </div>
 
 ---
 
-### نظرة عامة على المشروع
+## 🛡️ نظرة عامة على المشروع والقدرات الأساسية
+
+<details open>
+<summary><b>🛡️ نظرة عامة على المشروع والقدرات الأساسية</b></summary>
+<br>
 
 `shadow-vault` (`svault.exe`) هي أداة تشفير وإخفاء بيانات قائمة بذاتها ومكتوبة بلغة Rust بدون أي تبعيات خارجية، مصممة لحماية البيانات الحساسة للغاية:
 
@@ -48,32 +52,65 @@
 20. **التغليف الهجين المقاوم للحوسبة الكمومية (`src/pq_kem/`)** — يجمع بين خوارزمية X25519 ومعيار NIST FIPS 203 ML-KEM-768.
 21. **تصفير الذاكرة النشط (`zeroize`)** — مسح المخازن المؤقتة الحساسة في الذاكرة فور الانتهاء منها.
 
-### البدء السريع
+</details>
 
-```bash
-# 1. تشفير ملف بكلمة مرور وربط عتاد DPAPI
-svault encrypt -i wallet-seed.txt -o wallet.svault -p "your-strong-passphrase" --dpapi
+---
 
-# 2. إنشاء حاوية إنكار معقول (بيانات سرية + بيانات تمويهية)
-svault encrypt -i classified.txt --decoy shopping-list.txt -o deniable.svault \
-  -p "primary-secret-pass" --decoy-passphrase "decoy-harmless-pass" --padding 512
+## 🏛️ بنية الخزانة وإخفاء البيانات
 
-# 3. فك التشفير بكلمة المرور التمويهية (يظهر فقط الملف التمويهي)
-svault decrypt -i deniable.svault -o revealed.txt -p "decoy-harmless-pass"
+<details open>
+<summary><b>🏛️ بنية الخزانة وإخفاء البيانات</b></summary>
+<br>
 
-# 4. فحص بيانات الحاوية الوصفية بدون فك التشفير
-svault inspect deniable.svault
-
-# 5. إخفاء الخزانة داخل صورة PNG
-svault embed -c wallpaper.png -s classified.txt --decoy shopping-list.txt -o wallpaper-stego.png \
-  -p "primary-secret-pass" --decoy-passphrase "decoy-harmless-pass"
-
-# 6. استخراج البيانات السرية الحقيقية من صورة PNG
-svault extract -c wallpaper-stego.png -o restored-seed.txt -p "primary-secret-pass"
+```text
+  [ Primary Secret ] ──▶ [ ChaCha20-Poly1305 + CSPRNG Pad ] ──┐ (Hidden Slot)
+                                                                 │
+  [ Decoy Payload ]  ──▶ [ ChaCha20-Poly1305 Encrypted ]     ──┴─▶ SVLT v2 Container (.svault)
+                                                                        ├── Direct disk storage
+                                                                        └── Stego Carrier (PNG/WAV/BMP/MP3)
 ```
 
-### الترخيص وحقوق الملكية
+</details>
+
+---
+
+## 🚀 البدء السريع وسير عمل CLI
+
+<details open>
+<summary><b>🚀 البدء السريع وسير عمل CLI</b></summary>
+<br>
 
 Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
 
 مرخص بموجب **Apache License, Version 2.0** ([LICENSE](../../LICENSE)). يجب الحفاظ على إشعارات الإسناد الواردة في [NOTICE](../../NOTICE).
+
+</details>
+
+---
+
+## 🔒 أمان الذاكرة والتصفير النشط
+
+<details open>
+<summary><b>🔒 أمان الذاكرة والتصفير النشط</b></summary>
+<br>
+
+- **Rust آمن 100% وعمليات حسابية بزمن ثابت**: حماية كاملة من هجمات القنوات الجانبية.
+- **تصفير نشط للذاكرة**: مسح فوري لمخازن المفاتيح عبر `zeroize`.
+- **ربط بالعتاد عبر Windows DPAPI**: يستحيل فك التشفير خارج جلسة المستخدم الأصلية.
+- **حماية ضد ثغرات Zip Slip وقنابل فك الضغط**: تدقيق صارم للمسارات النسبية.
+
+</details>
+
+---
+
+## 📄 الترخيص وحقوق الملكية
+
+<details open>
+<summary><b>📄 الترخيص وحقوق الملكية</b></summary>
+<br>
+
+Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
+
+مرخص بموجب **Apache License, Version 2.0** ([LICENSE](../../LICENSE)). يجب الحفاظ على إشعارات الإسناد الواردة في [NOTICE](../../NOTICE).
+
+</details>

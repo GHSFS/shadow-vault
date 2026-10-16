@@ -12,13 +12,17 @@
 [![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
 [![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../../LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#panduan-cepat)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#-panduan-cepat-dan-alur-kerja-cli)
 
 </div>
 
 ---
 
-### Gambaran Umum Proyek
+## 🛡️ Gambaran Umum Proyek dan Kemampuan Inti
+
+<details open>
+<summary><b>🛡️ Gambaran Umum Proyek dan Kemampuan Inti</b></summary>
+<br>
 
 `shadow-vault` (`svault.exe`) adalah toolkit kriptografi dan steganografi biner tunggal tanpa dependensi eksternal yang ditulis dalam Rust, dirancang untuk melindungi aset bernilai tinggi:
 
@@ -48,32 +52,65 @@
 20. **Enkapsulasi Kunci Hibrida Pasca-Kuantum (`src/pq_kem/`)** — kombinasi X25519 dan standar NIST FIPS 203 ML-KEM-768.
 21. **Pembersihan Memori Aktif (`zeroize`)** — penghapusan buffer sensitif dalam memori setelah digunakan.
 
-### Panduan Cepat
+</details>
 
-```bash
-# 1. Enkripsi file dengan kata sandi dan pengikatan perangkat keras DPAPI
-svault encrypt -i wallet-seed.txt -o wallet.svault -p "kata-sandi-kuat" --dpapi
+---
 
-# 2. Buat brankas penyangkalan yang masuk akal (rahasia utama + umpan)
-svault encrypt -i classified.txt --decoy shopping-list.txt -o deniable.svault \
-  -p "sandi-utama" --decoy-passphrase "sandi-umpan" --padding 512
+## 🏛️ Arsitektur Brankas dan Steganografi
 
-# 3. Dekripsi dengan kata sandi umpan
-svault decrypt -i deniable.svault -o revealed.txt -p "sandi-umpan"
+<details open>
+<summary><b>🏛️ Arsitektur Brankas dan Steganografi</b></summary>
+<br>
 
-# 4. Periksa metadata wadah tanpa mendekripsi
-svault inspect deniable.svault
-
-# 5. Sembunyikan brankas di dalam gambar PNG
-svault embed -c wallpaper.png -s classified.txt --decoy shopping-list.txt -o wallpaper-stego.png \
-  -p "sandi-utama" --decoy-passphrase "sandi-umpan"
-
-# 6. Ekstrak rahasia nyata dari gambar PNG
-svault extract -c wallpaper-stego.png -o restored-seed.txt -p "sandi-utama"
+```text
+  [ Primary Secret ] ──▶ [ ChaCha20-Poly1305 + CSPRNG Pad ] ──┐ (Hidden Slot)
+                                                                 │
+  [ Decoy Payload ]  ──▶ [ ChaCha20-Poly1305 Encrypted ]     ──┴─▶ SVLT v2 Container (.svault)
+                                                                        ├── Direct disk storage
+                                                                        └── Stego Carrier (PNG/WAV/BMP/MP3)
 ```
 
-### Lisensi dan Atribusi
+</details>
+
+---
+
+## 🚀 Panduan Cepat dan Alur Kerja CLI
+
+<details open>
+<summary><b>🚀 Panduan Cepat dan Alur Kerja CLI</b></summary>
+<br>
 
 Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
 
 Didistribusikan di bawah **Apache License, Version 2.0** ([LICENSE](../../LICENSE)). Pemberitahuan atribusi harus dipertahankan sesuai dengan [NOTICE](../../NOTICE).
+
+</details>
+
+---
+
+## 🔒 Keamanan Memori dan Zeroisasi
+
+<details open>
+<summary><b>🔒 Keamanan Memori dan Zeroisasi</b></summary>
+<br>
+
+- **100% Rust Aman dan Aritmatika Waktu Konstan**: tanpa blok `unsafe` pada jalur data kriptografi.
+- **Zeroisasi Memori Aktif**: penghapusan memori sensitif secara otomatis dengan `zeroize`.
+- **Pengikatan Perangkat Keras DPAPI**: dekripsi mustahil dilakukan di luar sesi pengguna Windows asli.
+- **Pertahanan Zip Slip dan Bom Dekompresi**: validasi ketat pada struktur direktori.
+
+</details>
+
+---
+
+## 📄 Lisensi dan Atribusi
+
+<details open>
+<summary><b>📄 Lisensi dan Atribusi</b></summary>
+<br>
+
+Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
+
+Didistribusikan di bawah **Apache License, Version 2.0** ([LICENSE](../../LICENSE)). Pemberitahuan atribusi harus dipertahankan sesuai dengan [NOTICE](../../NOTICE).
+
+</details>

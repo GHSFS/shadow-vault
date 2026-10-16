@@ -12,13 +12,17 @@
 [![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
 [![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#quick-start)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#-quick-start--cli-workflows)
 
 </div>
 
 ---
 
-### Overview
+## 🛡️ Overview & Core Capabilities
+
+<details open>
+<summary><b>🛡️ Overview & Core Capabilities</b></summary>
+<br>
 
 `shadow-vault` (`svault.exe`) is a single-binary cryptographic vault and steganography toolkit written in Rust. It is built for operators who need robust protection for high-value files (seed phrases, private keys, credentials, research notes):
 
@@ -49,7 +53,36 @@
 21. **Post-Quantum Hybrid Key Encapsulation (`src/pq_kem/`)** — dual-layer quantum-resistant asymmetric vault sealing combining classical **X25519** elliptic-curve Diffie-Hellman with NIST **FIPS 203 ML-KEM-768** (formerly Kyber-768). Derives symmetric ChaCha20-Poly1305 encryption keys via HKDF-SHA256 with strong domain separation, packaging payloads into authenticated `SVPQ` wire format containers with IEEE 802.3 CRC-32 integrity and PEM-style ASCII armoring (`svault kem keygen`, `svault kem seal`, `svault kem open`, `svault kem inspect`).
 22. **Proactive Zeroize Hardening** — wipes sensitive intermediate key derivation buffers, ChaCha20 keys, Shamir polynomials, TOTP secrets, archive payload buffers, clipboard UTF-16 buffers, and DPAPI plaintext from memory upon drop using the `zeroize` crate.
 
-### Features
+</details>
+
+---
+
+## 🏛️ Vault & Steganography Architecture
+
+<details open>
+<summary><b>🏛️ Vault & Steganography Architecture</b></summary>
+<br>
+
+```text
+  [ Primary Secret ] ──▶ [ ChaCha20-Poly1305 + CSPRNG Pad ] ──┐ (Hidden Slot)
+                                                                 │
+  [ Decoy Payload ]  ──▶ [ ChaCha20-Poly1305 Encrypted ]     ──┴─▶ SVLT v2 Container (.svault)
+                                                                        ├── Direct disk storage
+                                                                        └── Stego Carrier
+                                                                              ├── PNG Image (.png)
+                                                                              ├── WAV Audio (.wav)
+                                                                              └── BMP Image (.bmp)
+```
+
+</details>
+
+---
+
+## ⚡ Core Features & Security Guarantees
+
+<details open>
+<summary><b>⚡ Core Features & Security Guarantees</b></summary>
+<br>
 
 - **Argon2id + ChaCha20-Poly1305 AEAD** — 128-bit random salt, 96-bit random nonce, domain-separated 256-bit key derivation, and 128-bit Poly1305 authentication tag.
 - **Auto-Expiring Clipboard Guard (`clip`)** — secure credential clipboard transfer with automated destruction:
@@ -145,20 +178,19 @@
 - **3-Pass Secure File Shredder (`shred`)** — overwrites sensitive plaintext files with `0x00`, `0xFF`, and CSPRNG random bytes before unlinking.
 - **Single Static Binary** — compiled with `+crt-static`, `opt-level = "z"`, LTO, and stripped symbols. Zero external runtime dependencies.
 
-### Architecture
+</details>
 
-```text
-  [ Primary Secret ] ──▶ [ ChaCha20-Poly1305 + CSPRNG Pad ] ──┐ (Hidden Slot)
-                                                                 │
-  [ Decoy Payload ]  ──▶ [ ChaCha20-Poly1305 Encrypted ]     ──┴─▶ SVLT v2 Container (.svault)
-                                                                        ├── Direct disk storage
-                                                                        └── Stego Carrier
-                                                                              ├── PNG Image (.png)
-                                                                              ├── WAV Audio (.wav)
-                                                                              └── BMP Image (.bmp)
-```
+---
 
-### Quick Start
+## 🚀 Quick Start & CLI Workflows
+
+<details open>
+<summary><b>🚀 Quick Start & CLI Workflows (Click group to collapse / expand)</b></summary>
+<br>
+
+<details open>
+<summary><b>🔐 1. Dual-Layer Encryption & Plausible Deniability Decoys (#1 - #6)</b></summary>
+<br>
 
 ```bash
 # 1. Encrypt a file with passphrase + Windows DPAPI hardware binding
@@ -183,7 +215,15 @@ svault embed -c wallpaper.png -s classified.txt --decoy shopping-list.txt -o wal
 # 6. Extract secret from PNG (extract with primary or decoy passphrase)
 svault extract -c wallpaper-stego.png -o restored-seed.txt -p "primary-secret-pass"
 svault extract -c wallpaper-stego.png -o decoy-seed.txt --decoy-passphrase "decoy-harmless-pass"
+```
 
+</details>
+
+<details open>
+<summary><b>🖼️ 2. Lossless Media Steganography: PNG, WAV, BMP, MP3 & Capacity (#7 - #13)</b></summary>
+<br>
+
+```bash
 # 7. Conceal a secret inside a WAV audio file (RIFF subchunk or 16-bit PCM LSB)
 svault embed-wav -c track.wav -s classified.txt -o track-lsb.wav -p "primary-secret-pass" --lsb
 
@@ -207,7 +247,15 @@ svault embed-mp3 -c song.mp3 -s classified.txt -o song-frame.mp3 -p "primary-sec
 
 # 13. Extract secret from MP3 audio file (auto-detects ID3v2 or frame mode)
 svault extract-mp3 -c song-stego.mp3 -o restored-mp3.txt -p "primary-secret-pass"
+```
 
+</details>
+
+<details open>
+<summary><b>🧩 3. Secure File Shredding, Shamir Secret Sharing & Entropy Auditing (#12 - #16)</b></summary>
+<br>
+
+```bash
 # 12. Securely shred the original plaintext file (3 passes)
 svault shred classified.txt --passes 3
 
@@ -222,7 +270,15 @@ svault audit -p "Correct-Horse-Battery-Staple-2026!"
 
 # 16. Audit a stego carrier image or container for anomalies and hidden payloads
 svault audit wallpaper-stego.png --json
+```
 
+</details>
+
+<details open>
+<summary><b>⏱️ 4. RFC 6238 TOTP 2FA Secret Store & Auto-Expiring Clipboard Guard (#17 - #23)</b></summary>
+<br>
+
+```bash
 # 17. Add a TOTP 2FA credential via Base32 secret or otpauth:// URI
 svault totp add github --secret "JBSWY3DPEHPK3PXP" --issuer "GitHub" --vault totp.svault -p "vault-pass"
 svault totp add --uri "otpauth://totp/Google:alice?secret=JBSWY3DPEHPK3PXP&issuer=Google" --vault totp.svault -p "vault-pass"
@@ -249,7 +305,15 @@ svault clip clear
 # 23. Decrypt directly to protected clipboard without printing to terminal or writing plaintext to disk
 svault decrypt -i secret.svault -p "vault-pass" --clip --clip-ttl 30
 svault totp code github --vault totp.svault -p "vault-pass" --clip --clip-ttl 15
+```
 
+</details>
+
+<details open>
+<summary><b>🛡️ 5. Cauchy Reed-Solomon Error-Correcting Armor & Directory Packing (#24 - #30)</b></summary>
+<br>
+
+```bash
 # 24. Armor a .svault container with Cauchy Reed-Solomon parity stripes (.svault.asc)
 svault armor -i secret.svault -o secret.svault.asc -k 4 -m 2
 
@@ -275,7 +339,15 @@ svault pack-dir -i ./my_project -o project.svault.asc -p "pack-passphrase" --arm
 svault unpack-dir -i project.svault -p "pack-passphrase" --list
 svault unpack-dir -i project.svault -p "pack-passphrase" --verify-only
 svault unpack-dir -i project.svault -o ./restored_project -p "pack-passphrase" --overwrite
+```
 
+</details>
+
+<details open>
+<summary><b>⏳ 6. Time-Lock Policy Headers, USB Keyfiles & Chunked Streaming (#31 - #42)</b></summary>
+<br>
+
+```bash
 # 31. Encrypt with time-lock escrow (cannot be opened until future date)
 svault encrypt -i escrow.txt -o escrow.svault -p "vault-pass" --not-before "2026-12-31T00:00:00Z" --policy-desc "Year-End Escrow"
 
@@ -321,7 +393,15 @@ svault stream decrypt -i db.svault -o restored_db.backup -p "stream-pass"
 # 42. Inspect streaming container metadata without decrypting
 svault stream inspect large_dataset.svault
 svault inspect large_dataset.svault --json
+```
 
+</details>
+
+<details open>
+<summary><b>🚨 7. Stego Diff Reports, Dead-Man Self-Shred Guard & Passphrase Gen (#43 - #53)</b></summary>
+<br>
+
+```bash
 # 43. Compare original carrier against stego-bearing carrier (PNG, BMP, WAV, or binary)
 svault compare cover.bmp stego.bmp
 svault compare cover.png stego.png --json
@@ -361,7 +441,15 @@ svault keygen --words 6 --seed "master-recovery-seed" --context "github-token"
 # 53. Generate raw 32-byte cryptographic token (Base64 or Base32) and copy to clipboard
 svault keygen --bytes 32 --base64 --clip --clip-ttl 30
 svault keygen --bytes 20 --base32 --json
+```
 
+</details>
+
+<details open>
+<summary><b>💻 8. Container Re-Key Rotation, Canary Integrity & REPL Shell (#54 - #63)</b></summary>
+<br>
+
+```bash
 # 54. Re-key container with new passphrase, fresh salt & nonce
 svault rotate -i vault.svault -o rotated.svault -p "old-secret" -n "new-secret"
 
@@ -397,7 +485,15 @@ svault repl -v myvault.svault -p "session-pass" --exec "get api_key --clip --cli
 # 63. Open REPL in read-only mode or export key-value entries to JSON
 svault repl -v myvault.svault -p "session-pass" --readonly --exec "list" --json
 svault repl -v myvault.svault -p "session-pass" --exec "export ./backup.json; exit"
+```
 
+</details>
+
+<details open>
+<summary><b>🔑 9. FIDO2 / Windows Hello Hardware Key Credential Binding (#64 - #70)</b></summary>
+<br>
+
+```bash
 # 64. Inspect host platform hardware token capabilities (Windows Hello, WebAuthn API, USB HID)
 svault fido2 status
 svault fido2 status --json
@@ -423,7 +519,15 @@ svault decrypt -i mfa.svault -o restored.txt -k usb_token.key --fido2-cred ./yub
 # 70. Re-key existing container to bind or unbind FIDO2 hardware credentials
 svault rotate -i sealed.svault --in-place -p "old-pass" -n "new-pass" --fido2 --fido2-cred ./yubikey.json
 svault rotate -i sealed.svault --in-place -p "new-pass" -n "plain-pass" --no-fido2 --fido2-cred ./yubikey.json
+```
 
+</details>
+
+<details open>
+<summary><b>⚛️ 10. Post-Quantum Hybrid Key Encapsulation (X25519 + ML-KEM-768) (#71 - #74)</b></summary>
+<br>
+
+```bash
 # 71. Generate a post-quantum hybrid keypair (X25519 + ML-KEM-768)
 svault kem keygen -p recipient.pub -s recipient.key
 svault kem keygen -p recipient.pub -s recipient.key --json
@@ -441,9 +545,36 @@ svault kem open -i sealed.svault.pq -o restored.txt -k recipient.key
 svault kem open -i sealed.asc -o restored.txt -k recipient.key --json
 ```
 
-### License & Attribution
+</details>
+
+</details>
+
+---
+
+## 🔒 Memory Safety & Hardening Invariants
+
+<details open>
+<summary><b>🔒 Memory Safety & Hardening Invariants</b></summary>
+<br>
+
+- **100% Safe Rust & Constant-Time Crypto**: No `unsafe` blocks in cryptographic data paths; branchless Galois Field arithmetic against timing attacks.
+- **Proactive Memory Zeroization**: Intermediate key schedules, plaintext buffers, and PRF seeds implement compiler-fenced zeroization on drop via `zeroize`.
+- **Hardware Profile Bound**: Optional Windows DPAPI wrapping ensures ciphertext cannot be decrypted outside the originating machine and user session.
+- **Path Traversal & Zip Bomb Defenses**: Canonical relative paths, strict anti-Zip Slip checks, and hard allocation bounds prevent exhaustion attacks.
+
+</details>
+
+---
+
+## 📄 License & Attribution
+
+<details open>
+<summary><b>📄 License & Attribution</b></summary>
+<br>
 
 Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
 
 Licensed under the **Apache License, Version 2.0** ([`LICENSE`](./LICENSE)).
 Pursuant to Section 4(d) of the Apache License 2.0, any redistribution or derivative work in Source or Object form must retain the attribution notices in [`NOTICE`](./NOTICE).
+
+</details>

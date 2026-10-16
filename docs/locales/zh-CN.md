@@ -12,13 +12,17 @@
 [![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
 [![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../../LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#快速开始)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#-cli-)
 
 </div>
 
 ---
 
-### 项目概述
+## 🛡️ 项目概述与核心能力
+
+<details open>
+<summary><b>🛡️ 项目概述与核心能力</b></summary>
+<br>
 
 `shadow-vault` (`svault.exe`) 是一个采用 Rust 编写的零依赖单二进制加密保险库与隐写工具箱，专为需要对高价值凭据（助记词、私钥、核心机密、研究文档）提供军事级保护的专业人员设计：
 
@@ -48,17 +52,33 @@
 20. **后量子混合密钥封装 (`src/pq_kem/`)** — 经典 X25519 ECDH + NIST FIPS 203 ML-KEM-768 双层后量子抗性密钥封装。
 21. **全链路内存主动清零 (`zeroize`)** — 关键缓冲区与密钥调度表在 Drop 时自动覆写清零。
 
-### 核心架构
+</details>
+
+---
+
+## 🏛️ 存储与隐写架构
+
+<details open>
+<summary><b>🏛️ 存储与隐写架构</b></summary>
+<br>
 
 ```text
-  [ 核心真实数据 ] ──▶ [ ChaCha20-Poly1305 + CSPRNG 填充 ] ──┐ (隐藏槽位)
-                                                             │
-  [ 无害诱饵数据 ] ──▶ [ ChaCha20-Poly1305 加密 ]          ──┴─▶ SVLT v2 容器 (.svault)
-                                                                   ├── 独立磁盘存储
-                                                                   └── 载体隐写嵌入 (PNG/WAV/BMP/MP3)
+  [ Primary Secret ] ──▶ [ ChaCha20-Poly1305 + CSPRNG Pad ] ──┐ (Hidden Slot)
+                                                                 │
+  [ Decoy Payload ]  ──▶ [ ChaCha20-Poly1305 Encrypted ]     ──┴─▶ SVLT v2 Container (.svault)
+                                                                        ├── Direct disk storage
+                                                                        └── Stego Carrier (PNG/WAV/BMP/MP3)
 ```
 
-### 快速开始
+</details>
+
+---
+
+## 🚀 快速开始与 CLI 工作流
+
+<details open>
+<summary><b>🚀 快速开始与 CLI 工作流</b></summary>
+<br>
 
 ```bash
 # 1. 使用密码与 Windows DPAPI 硬件绑定加密文件
@@ -96,8 +116,33 @@ svault kem seal -i classified.txt -o sealed.svault.pq -k recipient.pub
 svault kem open -i sealed.svault.pq -o restored.txt -k recipient.key
 ```
 
-### 版权与许可
+</details>
+
+---
+
+## 🔒 内存安全与零化保障
+
+<details open>
+<summary><b>🔒 内存安全与零化保障</b></summary>
+<br>
+
+- **100% 内存安全 Rust 与常数时间密码运算**：核心密码路径无 `unsafe`，伽罗瓦域运算恒定时间分支，杜绝侧信道攻击。
+- **主动内存零化清零**：关键密钥表、明文缓冲区与 PRF 种子在 Drop 时由 `zeroize` 自动覆写清零。
+- **硬件会话绑定**：可选 Windows DPAPI 硬件绑定，离开本机与当前登录会话即无法解密。
+- **防路径穿越与压缩炸弹**：严格的 Zip Slip 防护与内存分配硬上限。
+
+</details>
+
+---
+
+## 📄 版权与许可声明
+
+<details open>
+<summary><b>📄 版权与许可声明</b></summary>
+<br>
 
 Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
 
 本项目采用 **Apache License, Version 2.0** ([LICENSE](../../LICENSE)) 授权。依照 Apache-2.0 第 4(d) 条规定，任何派生作品与再分发版本均需完整保留 [NOTICE](../../NOTICE) 文件中的版权与致谢声明。
+
+</details>

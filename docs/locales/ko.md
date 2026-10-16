@@ -12,13 +12,17 @@
 [![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
 [![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../../LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#사용법-요약)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#-빠른-시작-및-cli-사용법-요약)
 
 </div>
 
 ---
 
-### 개요
+## 🛡️ 개요 및 핵심 역량
+
+<details open>
+<summary><b>🛡️ 개요 및 핵심 역량</b></summary>
+<br>
 
 `shadow-vault`(`svault.exe`)는 중요한 파일(시드 문구, 개인키, 자격증명, 보안 문서 등)을 이중으로 보호하고 일반 미디어 파일 내부에 은닉할 수 있는 Rust 기반 단일 바이너리 보안 금고 및 스테가노그래피 도구입니다.
 
@@ -49,7 +53,33 @@
 21. **포스트-양자 하이브리드 키 캡슐화 (`src/pq_kem/`)** — 고전 타원곡선 **X25519** 디피-헬만과 NIST **FIPS 203 ML-KEM-768**(구 Kyber-768) 격자 암호학을 결합한 이중 계층 양자 내성 비대칭 볼트 봉인 엔진. HKDF-SHA256 도메인 분리 키 유도를 통해 ChaCha20-Poly1305 대칭키를 도출하고, 전용 `SVPQ` v1 바이너리 컨테이너 및 PEM 스타일 ASCII 아머를 지원합니다 (`svault kem keygen`, `svault kem seal`, `svault kem open`, `svault kem inspect`).
 22. **선제적 메모리 제로화 보호 (`zeroize`)** — Argon2id 유도 키, ChaCha20 키 버퍼, 샤미르 다항식 계수, TOTP 비밀키, 아카이브 페이로드 버퍼, 클립보드 UTF-16 중간 버퍼 및 Windows DPAPI 복호화 평문 버퍼를 스코프 종료 즉시 메모리에서 0x00으로 완전 소거합니다.
 
-### 주요 기능
+</details>
+
+---
+
+## 🏛️ 보안 금고 및 스테가노그래피 아키텍처
+
+<details open>
+<summary><b>🏛️ 보안 금고 및 스테가노그래피 아키텍처</b></summary>
+<br>
+
+```text
+  [ 주 비밀 데이터 ] ──▶ [ ChaCha20-Poly1305 + CSPRNG 패딩 ] ──┐ (은닉 슬롯)
+                                                               │
+  [ 미끼 페이로드 ]  ──▶ [ ChaCha20-Poly1305 암호화 ]        ──┴─▶ SVLT v2 컨테이너 (.svault)
+                                                                     ├── 단독 디스크 저장
+                                                                     └── 캐리어 은닉 (PNG/WAV/BMP/MP3)
+```
+
+</details>
+
+---
+
+## ⚡ 핵심 암호화 및 스테가노그래피 기능
+
+<details open>
+<summary><b>⚡ 핵심 암호화 및 스테가노그래피 기능</b></summary>
+<br>
 
 - **Argon2id + ChaCha20-Poly1305 AEAD** — 매 암호화마다 새로운 128비트 솔트와 96비트 논스를 생성하며 변조 시 즉시 복호화를 거부합니다.
 - **자동 만료 클립보드 가드 (`clip`)** — 안전한 자격증명 복사 및 자동 파기 엔진:
@@ -126,7 +156,19 @@
 - **대화형 인메모리 금고 셸 (`repl` / `shell`)** — 단 한 번의 복호화로 키-값 비밀 저장소를 메모리에 적재하여 디스크 평문 저장 없이 안전하게 조회, 추가, 삭제, 내보내기, 가져오기를 수행하는 대화형 REPL 셸: 자동 소거 클립보드 보호(`--clip`), 읽기 전용 감사 모드(`--readonly`), 비대화형 배치 실행(`--exec`), 무중단 원자적 재암호화 저장 지원.
 - **다중 패스 완전 파쇄 (`shred`)** — 원본 평문 파일을 삭제할 때 `0x00` ➔ `0xFF` ➔ 난수 덮어쓰기 후 디스크 동기화 및 길이 0 절삭을 수행해 포렌식 복구를 차단합니다.
 
-### 사용법 요약
+</details>
+
+---
+
+## 🚀 빠른 시작 및 CLI 사용법 요약
+
+<details open>
+<summary><b>🚀 빠른 시작 및 CLI 사용법 요약 (카테고리별 접기 / 펼치기)</b></summary>
+<br>
+
+<details open>
+<summary><b>🔐 1. 이중 계층 암호화 및 그럴듯한 부인 미끼 금고 (#1 - #5)</b></summary>
+<br>
 
 ```bash
 # 1. 파일 암호화 (비밀번호 + Windows DPAPI 이중 잠금)
@@ -148,7 +190,15 @@ svault embed -c photo.png -s secret.txt --decoy harmless.txt -o photo_hidden.png
 # 5. PNG 이미지에서 비밀 파일 추출 및 복호화
 svault extract -c photo_hidden.png -o recovered.txt -p "주-비밀번호"
 svault extract -c photo_hidden.png -o harmless_rec.txt --decoy-passphrase "미끼-비밀번호"
+```
 
+</details>
+
+<details open>
+<summary><b>🖼️ 2. 무손실 미디어 스테가노그래피: PNG, WAV, BMP, MP3 및 용량 측정 (#6 - #13)</b></summary>
+<br>
+
+```bash
 # 6. WAV 오디오 파일 속에 비밀 파일 암호화 은닉 (서브청크 또는 16비트 PCM LSB)
 svault embed-wav -c audio.wav -s secret.txt -o audio_lsb.wav -p "비밀번호" --lsb
 
@@ -176,7 +226,15 @@ svault extract-mp3 -c song_stego.mp3 -o recovered_mp3.txt -p "비밀번호"
 # 13. 컨테이너 또는 스테고 미디어(.png, .wav, .bmp, .mp3) 메타데이터 조회
 svault inspect photo_lsb.bmp
 svault inspect song_stego.mp3
+```
 
+</details>
+
+<details open>
+<summary><b>🧩 3. 평문 파일 완전 파쇄, 샤미르 비밀 분할 및 엔트로피 감사 (#12 - #16)</b></summary>
+<br>
+
+```bash
 # 12. 원본 평문 파일 3-패스 완전 파쇄
 svault shred secret.txt --passes 3
 
@@ -191,7 +249,15 @@ svault audit -p "안전한-비밀번호-문구-2026!"
 
 # 16. 스테고 이미지/오디오 파일 또는 컨테이너 이상 징후 분석
 svault audit photo_lsb.bmp --json
+```
 
+</details>
+
+<details open>
+<summary><b>⏱️ 4. RFC 6238 TOTP 2FA 금고 및 자동 만료 클립보드 가드 (#17 - #23)</b></summary>
+<br>
+
+```bash
 # 17. Base32 시크릿 또는 otpauth:// URI로 2FA 계정 등록
 svault totp add github --secret "JBSWY3DPEHPK3PXP" --issuer "GitHub" --vault totp.svault -p "금고비밀번호"
 svault totp add --uri "otpauth://totp/Google:alice?secret=JBSWY3DPEHPK3PXP&issuer=Google" --vault totp.svault -p "금고비밀번호"
@@ -218,7 +284,15 @@ svault clip clear
 # 23. 터미널 노출 및 디스크 평문 저장 없이 클립보드로 직통 복호화
 svault decrypt -i secret.svault -p "금고비밀번호" --clip --clip-ttl 30
 svault totp code github --vault totp.svault -p "금고비밀번호" --clip --clip-ttl 15
+```
 
+</details>
+
+<details open>
+<summary><b>🛡️ 5. 코시 리드-솔로몬 오류 정정 아머 및 디렉터리 아카이브 패킹 (#24 - #30)</b></summary>
+<br>
+
+```bash
 # 24. 코시 리드-솔로몬 패리티 스트라이프가 적용된 ASCII 아머드 파일(.svault.asc) 생성
 svault armor -i secret.svault -o secret.svault.asc -k 4 -m 2
 
@@ -244,7 +318,15 @@ svault pack-dir -i ./my_project -o project.svault.asc -p "금고비밀번호" --
 svault unpack-dir -i project.svault -p "금고비밀번호" --list
 svault unpack-dir -i project.svault -p "금고비밀번호" --verify-only
 svault unpack-dir -i project.svault -o ./restored_project -p "금고비밀번호" --overwrite
+```
 
+</details>
+
+<details open>
+<summary><b>⏳ 6. 시간 잠금 정책, USB 키파일 2FA 및 대용량 청크 스트리밍 (#31 - #42)</b></summary>
+<br>
+
+```bash
 # 31. 미래 지정 시점까지 복호화를 거부하는 에스크로 시간 잠금 금고 생성
 svault encrypt -i escrow.txt -o escrow.svault -p "금고비밀번호" --not-before "2026-12-31T00:00:00Z" --policy-desc "연말 해제 에스크로"
 
@@ -290,7 +372,15 @@ svault stream decrypt -i db.svault -o restored_db.backup -p "스트리밍비밀�
 # 42. 복호화 없이 스트리밍 컨테이너 메타데이터 검사 (텍스트 및 JSON)
 svault stream inspect large_dataset.svault
 svault inspect large_dataset.svault --json
+```
 
+</details>
+
+<details open>
+<summary><b>🚨 7. 캐리어 품질 왜곡률 대조, 데드맨 자가 파쇄 가드 및 비밀번호 생성기 (#43 - #53)</b></summary>
+<br>
+
+```bash
 # 43. 원본 캐리어와 스테고 캐리어 간 시각/음향 품질 및 바이트 엔트로피 대조
 svault compare cover.bmp stego.bmp
 svault compare cover.png stego.png --json
@@ -333,7 +423,15 @@ svault rotate -i locked.svault -o unlocked.svault -p "기존비밀번호" -n "�
 # 53. 디렉터리 분리형 무결성 카나리 매니페스트 생성
 svault canary init -d ./vaults
 svault canary init -d ./vaults -p "카나리비밀번호" --json
+```
 
+</details>
+
+<details open>
+<summary><b>💻 8. 디렉터리 카나리 검증, 키 교체 회전 및 인메모리 REPL 셸 (#54 - #59)</b></summary>
+<br>
+
+```bash
 # 54. 디렉터리 카나리 무결성 및 변조 검증
 svault canary verify -d ./vaults
 svault canary verify -d ./vaults -p "카나리비밀번호" --strict --json
@@ -354,7 +452,15 @@ svault repl -v myvault.svault -p "금고비밀번호" --exec "export ./backup.js
 # 59. 호스트 플랫폼 하드웨어 토큰 및 WebAuthn API 지원 현황 조회
 svault fido2 status
 svault fido2 status --json
+```
 
+</details>
+
+<details open>
+<summary><b>🔑 9. FIDO2 물리 보안 키 및 Windows Hello 생체 자격증명 바인딩 (#60 - #65)</b></summary>
+<br>
+
+```bash
 # 60. FIDO2 USB 키 또는 Windows Hello 자격증명 등록
 svault fido2 enroll yubikey-5c --type usb --user alice --output ./yubikey.json
 svault fido2 enroll hello-tpm --type hello --pin 849201 --json
@@ -376,7 +482,15 @@ svault decrypt -i mfa.svault -o restored.txt -k usb_token.key --fido2-cred ./yub
 # 65. 기존 컨테이너의 FIDO2 하드웨어 자격증명 바인딩 추가 및 해제 회전
 svault rotate -i sealed.svault --in-place -p "기존비밀번호" -n "신규비밀번호" --fido2 --fido2-cred ./yubikey.json
 svault rotate -i sealed.svault --in-place -p "신규비밀번호" -n "일반비밀번호" --no-fido2 --fido2-cred ./yubikey.json
+```
 
+</details>
+
+<details open>
+<summary><b>⚛️ 10. 포스트-양자 하이브리드 키 캡슐화 (X25519 + ML-KEM-768) (#66 - #69)</b></summary>
+<br>
+
+```bash
 # 66. 포스트-양자 하이브리드 키쌍 생성 (X25519 + ML-KEM-768)
 svault kem keygen -p recipient.pub -s recipient.key
 svault kem keygen -p recipient.pub -s recipient.key --json
@@ -394,9 +508,35 @@ svault kem open -i sealed.svault.pq -o restored.txt -k recipient.key
 svault kem open -i sealed.asc -o restored.txt -k recipient.key --json
 ```
 
-### 저작권 및 라이선스
+</details>
+
+</details>
+
+---
+
+## 🔒 메모리 안전성 및 제로화 보안 설계
+
+<details open>
+<summary><b>🔒 메모리 안전성 및 제로화 보안 설계</b></summary>
+<br>
+
+- **100% 안전한 Rust 및 상수시간 암호 연산**: 암호화 데이터 처리 경로에 `unsafe` 블록을 일절 배제하였으며, 갈루아체 연산에서 분기 없는 상수시간(Constant-Time) 알고리즘을 적용하여 타이밍 부채널 공격을 원천 방어합니다.
+- **메모리 제로화 자동 소거**: 중간 키 스케줄, 평문 버퍼, TOTP 시크릿, PRF 시드는 Drop 시 `zeroize` 크레이트를 통해 컴파일러 최적화 방지 메모리 제로화(Zeroization)를 수행합니다.
+- **하드웨어 프로필 귀속**: 선택적 Windows DPAPI 래핑을 통해 암호화 파일이 유출되더라도 생성된 원래 머신 및 Windows 사용자 세션 외부에서는 복호화가 불가능합니다.
+- **경로 순회(Zip Slip) 및 압축 폭탄 방어**: 아카이브 패킹/언패킹 시 정규화된 상대 경로 검증, 예약어 차단, 할당 상한 검사를 통해 시스템을 보호합니다.
+
+</details>
+
+---
+
+## 📄 저작권 및 라이선스 고지
+
+<details open>
+<summary><b>📄 저작권 및 라이선스 고지</b></summary>
+<br>
 
 Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
 
 본 프로젝트는 **Apache License, Version 2.0** ([`LICENSE`](../../LICENSE)) 하에 배포되며, 모든 복제본·재배포본·파생 저작물은 Apache-2.0 제4조(d)항에 따라 [`NOTICE`](../../NOTICE) 파일에 명시된 **GHSFS** 저작권 및 출처 고지를 반드시 유지해야 합니다.
 
+</details>

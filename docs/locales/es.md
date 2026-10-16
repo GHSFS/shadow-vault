@@ -12,13 +12,17 @@
 [![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
 [![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../../LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#inicio-rápido)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#-inicio-r-pido-y-flujos-de-trabajo-cli)
 
 </div>
 
 ---
 
-### Descripción General
+## 🛡️ Descripción General y Capacidades
+
+<details open>
+<summary><b>🛡️ Descripción General y Capacidades</b></summary>
+<br>
 
 `shadow-vault` (`svault.exe`) es un conjunto de herramientas criptográficas y de esteganografía en un único binario sin dependencias externas escrito en Rust. Diseñado para operadores que requieren máxima protección para archivos de alto valor (frases semilla, claves privadas, credenciales y notas de investigación):
 
@@ -48,32 +52,65 @@
 20. **Encapsulamiento Híbrido Poscántico (`src/pq_kem/`)** — sellado asimétrico resistente a computación cuántica combinando X25519 con NIST FIPS 203 ML-KEM-768.
 21. **Limpieza Activa de Memoria (`zeroize`)** — sobrescritura inmediata de búferes de claves sensibles al salir del ámbito.
 
-### Inicio Rápido
+</details>
 
-```bash
-# 1. Cifrar un archivo con contraseña y vinculación DPAPI
-svault encrypt -i wallet-seed.txt -o wallet.svault -p "your-strong-passphrase" --dpapi
+---
 
-# 2. Cifrar bóveda de negación plausible con secreto y señuelo
-svault encrypt -i classified.txt --decoy shopping-list.txt -o deniable.svault \
-  -p "primary-secret-pass" --decoy-passphrase "decoy-harmless-pass" --padding 512
+## 🏛️ Arquitectura de la Bóveda y Esteganografía
 
-# 3. Desbloquear con contraseña señuelo (solo revela lista de compras)
-svault decrypt -i deniable.svault -o revealed.txt -p "decoy-harmless-pass"
+<details open>
+<summary><b>🏛️ Arquitectura de la Bóveda y Esteganografía</b></summary>
+<br>
 
-# 4. Inspeccionar metadatos del contenedor sin descifrar
-svault inspect deniable.svault
-
-# 5. Ocultar bóveda dentro de una imagen PNG
-svault embed -c wallpaper.png -s classified.txt --decoy shopping-list.txt -o wallpaper-stego.png \
-  -p "primary-secret-pass" --decoy-passphrase "decoy-harmless-pass"
-
-# 6. Extraer secreto real desde la imagen PNG
-svault extract -c wallpaper-stego.png -o restored-seed.txt -p "primary-secret-pass"
+```text
+  [ Primary Secret ] ──▶ [ ChaCha20-Poly1305 + CSPRNG Pad ] ──┐ (Hidden Slot)
+                                                                 │
+  [ Decoy Payload ]  ──▶ [ ChaCha20-Poly1305 Encrypted ]     ──┴─▶ SVLT v2 Container (.svault)
+                                                                        ├── Direct disk storage
+                                                                        └── Stego Carrier (PNG/WAV/BMP/MP3)
 ```
 
-### Licencia y Atribución
+</details>
+
+---
+
+## 🚀 Inicio Rápido y Flujos de Trabajo CLI
+
+<details open>
+<summary><b>🚀 Inicio Rápido y Flujos de Trabajo CLI</b></summary>
+<br>
 
 Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
 
 Distribuido bajo la **Licencia Apache 2.0** ([LICENSE](../../LICENSE)). Las redistribuciones deben conservar los avisos de atribución contenidos en [NOTICE](../../NOTICE).
+
+</details>
+
+---
+
+## 🔒 Seguridad de Memoria y Ceroización
+
+<details open>
+<summary><b>🔒 Seguridad de Memoria y Ceroización</b></summary>
+<br>
+
+- **Rust 100% Seguro y Criptografía de Tiempo Constante**: sin bloques `unsafe` en rutas críticas de datos.
+- **Ceroización Activa de Memoria**: sobrescritura garantizada con `zeroize` al salir del ámbito.
+- **Vinculación a la Sesión del Hardware**: cifrado DPAPI intransferible fuera de la cuenta Windows original.
+- **Prevención de Ataques Zip Slip y Bombas de Descompresión**: verificación canónica de rutas relativas.
+
+</details>
+
+---
+
+## 📄 Licencia y Atribución
+
+<details open>
+<summary><b>📄 Licencia y Atribución</b></summary>
+<br>
+
+Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
+
+Distribuido bajo la **Licencia Apache 2.0** ([LICENSE](../../LICENSE)). Las redistribuciones deben conservar los avisos de atribución contenidos en [NOTICE](../../NOTICE).
+
+</details>

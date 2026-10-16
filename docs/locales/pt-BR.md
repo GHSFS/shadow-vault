@@ -7,18 +7,22 @@
 
 # shadow-vault (`svault`)
 
-> Cofre criptográfico com esteganografia de confiança zero e vinculação de hardware em camada dupla — oculte arquivos confidenciais dentro de arquivos comuns PNG/áudio, sele-os com Argon2id + ChaCha20-Poly1305 + Windows DPAPI, ou incorpore cofres de isca com negação plausível de senha dupla.
+> Cofre criptografado com esteganografia de confiança zero e vinculação de hardware em camada dupla — oculte arquivos confidenciais dentro de arquivos comuns PNG/áudio, sele-os com Argon2id + ChaCha20-Poly1305 + Windows DPAPI, ou incorpore cofres de isca com negação plausível de senha dupla.
 
 [![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
 [![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../../LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#início-rápido)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#-in-cio-r-pido-e-fluxos-de-trabalho-cli)
 
 </div>
 
 ---
 
-### Visão Geral
+## 🛡️ Visão Geral e Capacidades Principais
+
+<details open>
+<summary><b>🛡️ Visão Geral e Capacidades Principais</b></summary>
+<br>
 
 O `shadow-vault` (`svault.exe`) é um utilitário criptográfico e esteganográfico em binário único sem dependências externas desenvolvido em Rust:
 
@@ -48,32 +52,65 @@ O `shadow-vault` (`svault.exe`) é um utilitário criptográfico e esteganográf
 20. **Encapsulamento Híbrido Pós-Quântico (`src/pq_kem/`)** — combinação de X25519 com NIST FIPS 203 ML-KEM-768.
 21. **Zeroização Ativa de Memória (`zeroize`)** — destruição garantida de buffers sensíveis na memória.
 
-### Início Rápido
+</details>
 
-```bash
-# 1. Cifrar arquivo com senha e vinculação de hardware DPAPI
-svault encrypt -i wallet-seed.txt -o wallet.svault -p "sua-senha-forte" --dpapi
+---
 
-# 2. Cifrar cofre de negação plausível com segredo real e isca
-svault encrypt -i classified.txt --decoy shopping-list.txt -o deniable.svault \
-  -p "senha-principal" --decoy-passphrase "senha-isca" --padding 512
+## 🏛️ Arquitetura do Cofre e Esteganografia
 
-# 3. Desbloquear com senha de isca
-svault decrypt -i deniable.svault -o revealed.txt -p "senha-isca"
+<details open>
+<summary><b>🏛️ Arquitetura do Cofre e Esteganografia</b></summary>
+<br>
 
-# 4. Inspecionar metadados sem descifrar
-svault inspect deniable.svault
-
-# 5. Ocultar cofre dentro de uma imagem PNG
-svault embed -c wallpaper.png -s classified.txt --decoy shopping-list.txt -o wallpaper-stego.png \
-  -p "senha-principal" --decoy-passphrase "senha-isca"
-
-# 6. Extrair segredo real da imagem PNG
-svault extract -c wallpaper-stego.png -o restored-seed.txt -p "senha-principal"
+```text
+  [ Primary Secret ] ──▶ [ ChaCha20-Poly1305 + CSPRNG Pad ] ──┐ (Hidden Slot)
+                                                                 │
+  [ Decoy Payload ]  ──▶ [ ChaCha20-Poly1305 Encrypted ]     ──┴─▶ SVLT v2 Container (.svault)
+                                                                        ├── Direct disk storage
+                                                                        └── Stego Carrier (PNG/WAV/BMP/MP3)
 ```
 
-### Licença e Atribuição
+</details>
+
+---
+
+## 🚀 Início Rápido e Fluxos de Trabalho CLI
+
+<details open>
+<summary><b>🚀 Início Rápido e Fluxos de Trabalho CLI</b></summary>
+<br>
 
 Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
 
 Distribuído sob a **Licença Apache 2.0** ([LICENSE](../../LICENSE)). Consulte o arquivo [NOTICE](../../NOTICE) para detalhes de atribuição.
+
+</details>
+
+---
+
+## 🔒 Segurança de Memória e Zeroização
+
+<details open>
+<summary><b>🔒 Segurança de Memória e Zeroização</b></summary>
+<br>
+
+- **Rust 100% Seguro e Aritmética em Tempo Constante**: proteção total contra ataques de canal lateral.
+- **Zeroização Ativa de Memória**: eliminação imediata de buffers confidenciais com `zeroize`.
+- **Proteção por Hardware DPAPI**: impossível de descriptografar fora da sessão Windows de origem.
+- **Prevenção de Zip Slip e Descompressão Maliciosa**: validação estrita de caminhos e limites de alocação.
+
+</details>
+
+---
+
+## 📄 Licença e Atribuição
+
+<details open>
+<summary><b>📄 Licença e Atribuição</b></summary>
+<br>
+
+Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
+
+Distribuído sob a **Licença Apache 2.0** ([LICENSE](../../LICENSE)). Consulte o arquivo [NOTICE](../../NOTICE) para detalhes de atribuição.
+
+</details>

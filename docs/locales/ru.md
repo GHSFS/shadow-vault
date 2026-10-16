@@ -12,13 +12,17 @@
 [![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
 [![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../../LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#быстрый-старт)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#-cli)
 
 </div>
 
 ---
 
-### Обзор проекта
+## 🛡️ Обзор проекта и ключевые возможности
+
+<details open>
+<summary><b>🛡️ Обзор проекта и ключевые возможности</b></summary>
+<br>
 
 `shadow-vault` (`svault.exe`) — автономный криптографический инструмент и стеганографический комплекс на языке Rust без внешних зависимостей, обеспечивающий защиту критически важных данных:
 
@@ -48,32 +52,65 @@
 20. **Постквантовое гибридное инкапсулирование (`src/pq_kem/`)** — сочетание алгоритма X25519 и стандарта NIST FIPS 203 ML-KEM-768.
 21. **Принудительное обнуление памяти (`zeroize`)** — затирание криптографических ключей в оперативной памяти после использования.
 
-### Быстрый старт
+</details>
 
-```bash
-# 1. Зашифровать файл паролем с аппаратной привязкой DPAPI
-svault encrypt -i wallet-seed.txt -o wallet.svault -p "надежный-пароль" --dpapi
+---
 
-# 2. Создать контейнер с правдоподобным отрицанием (основной секрет + приманка)
-svault encrypt -i classified.txt --decoy shopping-list.txt -o deniable.svault \
-  -p "основной-пароль" --decoy-passphrase "пароль-приманки" --padding 512
+## 🏛️ Архитектура хранилища и стеганографии
 
-# 3. Расшифровать контейнер паролем приманки (открывается только ложный список)
-svault decrypt -i deniable.svault -o revealed.txt -p "пароль-приманки"
+<details open>
+<summary><b>🏛️ Архитектура хранилища и стеганографии</b></summary>
+<br>
 
-# 4. Проверить метаданные контейнера без расшифровки
-svault inspect deniable.svault
-
-# 5. Скрыть контейнер внутри изображения PNG
-svault embed -c wallpaper.png -s classified.txt --decoy shopping-list.txt -o wallpaper-stego.png \
-  -p "основной-пароль" --decoy-passphrase "пароль-приманки"
-
-# 6. Извлечь подлинный секрет из изображения PNG
-svault extract -c wallpaper-stego.png -o restored-seed.txt -p "основной-пароль"
+```text
+  [ Primary Secret ] ──▶ [ ChaCha20-Poly1305 + CSPRNG Pad ] ──┐ (Hidden Slot)
+                                                                 │
+  [ Decoy Payload ]  ──▶ [ ChaCha20-Poly1305 Encrypted ]     ──┴─▶ SVLT v2 Container (.svault)
+                                                                        ├── Direct disk storage
+                                                                        └── Stego Carrier (PNG/WAV/BMP/MP3)
 ```
 
-### Лицензия и авторские права
+</details>
+
+---
+
+## 🚀 Быстрый старт и примеры команд CLI
+
+<details open>
+<summary><b>🚀 Быстрый старт и примеры команд CLI</b></summary>
+<br>
 
 Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
 
 Проект распространяется под лицензией **Apache 2.0** ([LICENSE](../../LICENSE)). Уведомления об авторстве должны сохраняться в соответствии с [NOTICE](../../NOTICE).
+
+</details>
+
+---
+
+## 🔒 Безопасность памяти и гарантированное затирание
+
+<details open>
+<summary><b>🔒 Безопасность памяти и гарантированное затирание</b></summary>
+<br>
+
+- **100% Безопасный Rust и вычисления с константным временем**: защита от тайминг-атак в полях Галуа.
+- **Принудительное обнуление памяти**: автоматическая очистка буферов ключей с помощью `zeroize`.
+- **Аппаратная привязка DPAPI**: расшифровка невозможна вне исходного профиля Windows.
+- **Защита от атак Zip Slip и декомпрессионных бомб**: строгая нормализация путей.
+
+</details>
+
+---
+
+## 📄 Лицензия и авторские права
+
+<details open>
+<summary><b>📄 Лицензия и авторские права</b></summary>
+<br>
+
+Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
+
+Проект распространяется под лицензией **Apache 2.0** ([LICENSE](../../LICENSE)). Уведомления об авторстве должны сохраняться в соответствии с [NOTICE](../../NOTICE).
+
+</details>

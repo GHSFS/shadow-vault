@@ -12,13 +12,17 @@
 [![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
 [![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../../LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#त्वरित-शुरुआत)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#-cli-)
 
 </div>
 
 ---
 
-### परियोजना अवलोकन
+## 🛡️ परियोजना अवलोकन और मुख्य क्षमताएं
+
+<details open>
+<summary><b>🛡️ परियोजना अवलोकन और मुख्य क्षमताएं</b></summary>
+<br>
 
 `shadow-vault` (`svault.exe`) Rust में लिखा गया एक शून्य-निर्भरता एकल बाइनरी क्रिप्टोग्राफ़िक वॉल्ट और स्टेग्नोग्राफ़ी टूलकिट है, जिसे उच्च-मूल्य वाली संपत्तियों (सीड वाक्यांश, निजी कुंजी, क्रेडेंशियल्स और अनुसंधान नोट्स) की सुरक्षा के लिए डिज़ाइन किया गया है:
 
@@ -48,32 +52,65 @@
 20. **पोस्ट-क्वांटम हाइब्रिड कुंजी इनकैप्सुलेशन (`src/pq_kem/`)** — X25519 और NIST FIPS 203 ML-KEM-768 का संयोजन।
 21. **सक्रिय मेमोरी ज़ीरोइज़ेशन (`zeroize`)** — उपयोग के तुरंत बाद मेमोरी से संवेदनशील बफ़र्स को मिटाना।
 
-### त्वरित शुरुआत
+</details>
 
-```bash
-# 1. DPAPI हार्डवेयर बाइंडिंग के साथ फ़ाइल एन्क्रिप्ट करें
-svault encrypt -i wallet-seed.txt -o wallet.svault -p "your-strong-passphrase" --dpapi
+---
 
-# 2. प्रशंसनीय अस्वीकार्यता वॉल्ट बनाएं (वास्तविक और डिकॉय डेटा)
-svault encrypt -i classified.txt --decoy shopping-list.txt -o deniable.svault \
-  -p "primary-secret-pass" --decoy-passphrase "decoy-harmless-pass" --padding 512
+## 🏛️ वॉल्ट और स्टेग्नोग्राफ़ी वास्तुकला
 
-# 3. डिकॉय पासवर्ड से डिक्रिप्ट करें (केवल डिकॉय सूची प्रकट होती है)
-svault decrypt -i deniable.svault -o revealed.txt -p "decoy-harmless-pass"
+<details open>
+<summary><b>🏛️ वॉल्ट और स्टेग्नोग्राफ़ी वास्तुकला</b></summary>
+<br>
 
-# 4. बिना डिक्रिप्ट किए मेटाडेटा का निरीक्षण करें
-svault inspect deniable.svault
-
-# 5. PNG छवि के अंदर वॉल्ट छुपाएं
-svault embed -c wallpaper.png -s classified.txt --decoy shopping-list.txt -o wallpaper-stego.png \
-  -p "primary-secret-pass" --decoy-passphrase "decoy-harmless-pass"
-
-# 6. PNG छवि से वास्तविक रहस्य निकालें
-svault extract -c wallpaper-stego.png -o restored-seed.txt -p "primary-secret-pass"
+```text
+  [ Primary Secret ] ──▶ [ ChaCha20-Poly1305 + CSPRNG Pad ] ──┐ (Hidden Slot)
+                                                                 │
+  [ Decoy Payload ]  ──▶ [ ChaCha20-Poly1305 Encrypted ]     ──┴─▶ SVLT v2 Container (.svault)
+                                                                        ├── Direct disk storage
+                                                                        └── Stego Carrier (PNG/WAV/BMP/MP3)
 ```
 
-### लाइसेंस और आभार
+</details>
+
+---
+
+## 🚀 त्वरित शुरुआत और CLI वर्कफ़्लो
+
+<details open>
+<summary><b>🚀 त्वरित शुरुआत और CLI वर्कफ़्लो</b></summary>
+<br>
 
 Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
 
 यह सॉफ़्टवेयर **Apache License, Version 2.0** ([LICENSE](../../LICENSE)) के तहत जारी किया गया है। पुनर्वितरण में [NOTICE](../../NOTICE) में निहित एट्रिब्यूशन शामिल होना चाहिए।
+
+</details>
+
+---
+
+## 🔒 मेमोरी सुरक्षा और ज़ीरोइज़ेशन
+
+<details open>
+<summary><b>🔒 मेमोरी सुरक्षा और ज़ीरोइज़ेशन</b></summary>
+<br>
+
+- **100% सुरक्षित Rust और निरंतर-समय अंकगणित**: कोई `unsafe` ब्लॉक नहीं, साइड-चैनल हमलों से पूर्ण सुरक्षा।
+- **सक्रिय मेमोरी ज़ीरोइज़ेशन**: संवेदनशील बफ़र्स को `zeroize` द्वारा तत्काल मिटा दिया जाता है।
+- **Windows DPAPI हार्डवेयर बाइंडिंग**: मूल सत्र के बाहर डिक्रिप्शन असंभव है।
+- **Zip Slip और डिप्रेशन बम सुरक्षा**: पथों का कड़ा सत्यापन।
+
+</details>
+
+---
+
+## 📄 लाइसेंस और आभार
+
+<details open>
+<summary><b>📄 लाइसेंस और आभार</b></summary>
+<br>
+
+Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
+
+यह सॉफ़्टवेयर **Apache License, Version 2.0** ([LICENSE](../../LICENSE)) के तहत जारी किया गया है। पुनर्वितरण में [NOTICE](../../NOTICE) में निहित एट्रिब्यूशन शामिल होना चाहिए।
+
+</details>

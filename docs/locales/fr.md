@@ -12,13 +12,17 @@
 [![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
 [![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../../LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#démarrage-rapide)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#-d-marrage-rapide-et-commandes-cli)
 
 </div>
 
 ---
 
-### Aperçu du Projet
+## 🛡️ Aperçu du Projet et Capacités Clés
+
+<details open>
+<summary><b>🛡️ Aperçu du Projet et Capacités Clés</b></summary>
+<br>
 
 `shadow-vault` (`svault.exe`) est un coffre-fort cryptographique et une suite stéganographique autonome en un binaire unique écrit en Rust, conçu pour protéger les données à très haute valeur :
 
@@ -48,32 +52,65 @@
 20. **Encapsulation Hybride Post-Quantique (`src/pq_kem/`)** — alliance de X25519 et du standard NIST FIPS 203 ML-KEM-768.
 21. **Nettoyage Mémoire Actif (`zeroize`)** — écrasement immédiat des tampons sensibles en mémoire.
 
-### Démarrage Rapide
+</details>
 
-```bash
-# 1. Chiffrer un fichier avec mot de passe et liaison matérielle DPAPI
-svault encrypt -i wallet-seed.txt -o wallet.svault -p "mot-de-passe-robuste" --dpapi
+---
 
-# 2. Créer un coffre à déni plausible avec secret et leurre
-svault encrypt -i classified.txt --decoy shopping-list.txt -o deniable.svault \
-  -p "pass-principal" --decoy-passphrase "pass-leurre" --padding 512
+## 🏛️ Architecture du Coffre et Stéganographie
 
-# 3. Déchiffrer avec le mot de passe leurre
-svault decrypt -i deniable.svault -o revealed.txt -p "pass-leurre"
+<details open>
+<summary><b>🏛️ Architecture du Coffre et Stéganographie</b></summary>
+<br>
 
-# 4. Inspecter les métadonnées sans déchiffrer
-svault inspect deniable.svault
-
-# 5. Dissimuler un coffre dans une image PNG
-svault embed -c wallpaper.png -s classified.txt --decoy shopping-list.txt -o wallpaper-stego.png \
-  -p "pass-principal" --decoy-passphrase "pass-leurre"
-
-# 6. Extraire le secret réel depuis l'image PNG
-svault extract -c wallpaper-stego.png -o restored-seed.txt -p "pass-principal"
+```text
+  [ Primary Secret ] ──▶ [ ChaCha20-Poly1305 + CSPRNG Pad ] ──┐ (Hidden Slot)
+                                                                 │
+  [ Decoy Payload ]  ──▶ [ ChaCha20-Poly1305 Encrypted ]     ──┴─▶ SVLT v2 Container (.svault)
+                                                                        ├── Direct disk storage
+                                                                        └── Stego Carrier (PNG/WAV/BMP/MP3)
 ```
 
-### Licence et Attribution
+</details>
+
+---
+
+## 🚀 Démarrage Rapide et Commandes CLI
+
+<details open>
+<summary><b>🚀 Démarrage Rapide et Commandes CLI</b></summary>
+<br>
 
 Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
 
 Distribué sous licence **Apache 2.0** ([LICENSE](../../LICENSE)). Veuillez vous référer au fichier [NOTICE](../../NOTICE) pour les mentions d'attribution obligatoires.
+
+</details>
+
+---
+
+## 🔒 Sécurité Mémoire et Rapprochement Zéro
+
+<details open>
+<summary><b>🔒 Sécurité Mémoire et Rapprochement Zéro</b></summary>
+<br>
+
+- **Rust 100% Sûr et Calculs en Temps Constant**: absence totale de blocs `unsafe` dans le traitement cryptographique.
+- **Mise à Zéro Active de la Mémoire**: effacement immédiat des clés avec la caisse `zeroize`.
+- **Liaison Matérielle DPAPI**: inviolable en dehors de la session Windows d'origine.
+- **Défenses Anti-Zip Slip et Bombes de Décompression**: validation stricte des chemins.
+
+</details>
+
+---
+
+## 📄 Licence et Attribution
+
+<details open>
+<summary><b>📄 Licence et Attribution</b></summary>
+<br>
+
+Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
+
+Distribué sous licence **Apache 2.0** ([LICENSE](../../LICENSE)). Veuillez vous référer au fichier [NOTICE](../../NOTICE) pour les mentions d'attribution obligatoires.
+
+</details>

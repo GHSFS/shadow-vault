@@ -1,0 +1,79 @@
+<div align="center">
+
+<p align="center">
+  <a href="../../README.md">🇺🇸 English</a> · <a href="./ko.md">🇰🇷 한국어</a> · <a href="./zh-CN.md">🇨🇳 中文</a> · <a href="./es.md">🇪🇸 Español</a> · <strong>🇮🇳 हिन्दी</strong><br />
+  <a href="./ar.md">🇸🇦 العربية</a> · <a href="./pt-BR.md">🇧🇷 Português</a> · <a href="./ru.md">🇷🇺 Русский</a> · <a href="./fr.md">🇫🇷 Français</a> · <a href="./id.md">🇮🇩 Bahasa Indonesia</a>
+</p>
+
+# shadow-vault (`svault`)
+
+> शून्य-विश्वास स्टेग्नोग्राफ़ी और दोहरी-परत हार्डवेयर-बाध्य एन्क्रिप्टेड वॉल्ट — संवेदनशील फ़ाइलों को सामान्य PNG/ऑडियो वाहक के अंदर छुपाएं, उन्हें Argon2id + ChaCha20-Poly1305 + Windows DPAPI के साथ सील करें, या दोहरे पासवर्ड प्रशंसनीय अस्वीकार्यता डिकॉय वॉल्ट एम्बेड करें।
+
+[![Build](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/build.yml)
+[![Tests](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml/badge.svg)](https://github.com/GHSFS/shadow-vault/actions/workflows/test.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](../../LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#त्वरित-शुरुआत)
+
+</div>
+
+---
+
+### परियोजना अवलोकन
+
+`shadow-vault` (`svault.exe`) Rust में लिखा गया एक शून्य-निर्भरता एकल बाइनरी क्रिप्टोग्राफ़िक वॉल्ट और स्टेग्नोग्राफ़ी टूलकिट है, जिसे उच्च-मूल्य वाली संपत्तियों (सीड वाक्यांश, निजी कुंजी, क्रेडेंशियल्स और अनुसंधान नोट्स) की सुरक्षा के लिए डिज़ाइन किया गया है:
+
+1. **दोहरी-परत प्रमाणीकृत एन्क्रिप्शन (`SVLT` v1/v2)** — **Argon2id** कुंजी व्युत्पत्ति + **ChaCha20-Poly1305** AEAD को वैकल्पिक **Windows DPAPI (`CryptProtectData`)** हार्डवेयर/उपयोगकर्ता सत्र बाइंडिंग के साथ जोड़ता है।
+2. **प्रशंसनीय अस्वीकार्यता और डिकॉय वॉल्ट (`src/decoy.rs`)** — एकल कंटेनर में प्राथमिक गुप्त डेटा और हानिरहित डिकॉय पेलोड दोनों को एम्बेड करता है। दबाव की स्थिति में, डिकॉय पासवर्ड केवल हानिरहित डेटा को अनलॉक करता है, जबकि प्राथमिक गुप्त स्लॉट सांख्यिकीय रूप से यादृच्छिक शोर के समान रहता है।
+3. **हानिरहित मीडिया स्टेग्नोग्राफ़ी**:
+   - **PNG छवियां**: वैध IEEE 802.3 CRC-32 के साथ `IEND` से पहले `svLt` निजी सहायक हिस्सा सम्मिलित करता है।
+   - **WAV ऑडियो**: RIFF/WAVE सब-हिस्सा और 16-बिट PCM ऑडियो नमूनों में LSB प्रतिस्थापन का समर्थन करता है।
+   - **BMP छवियां**: 4-बाइट पंक्ति पैडिंग संरक्षण और 12-बाइट छेड़छाड़-रोधी लिफाफे के साथ 24-बिट RGB चैनलों में LSB मॉड्यूलेशन।
+   - **MP3 ऑडियो**: ID3v2 `PRIV` निजी टैग फ़्रेम या MPEG इंटर-फ़्रेम पैडिंग में डेटा छुपाता है।
+4. **सार्वभौमिक वाहक क्षमता अनुमान (`capacity`)** — `.bmp`, `.wav`, `.png`, `.mp3` में उपलब्ध पेलोड क्षमता की गणना करता है।
+5. **शमीर का गुप्त साझाकरण (`M-of-N`, `src/shamir.rs`)** — $\text{GF}(256)$ पर निरंतर-समय अंकगणित के साथ $N$ शेयरों में कुंजी विभाजन।
+6. **पासफ़्रेज़ शक्ति और वाहक एन्ट्रापी लेखा परीक्षक (`src/audit.rs`)** — शैनन एन्ट्रापी और कमजोर पैटर्न का विश्लेषण।
+7. **RFC 6238 TOTP 2FA वॉल्ट (`src/totp.rs`)** — टाइमिंग हमलों से सुरक्षित स्व-निहित 2FA स्थानीय प्रमाणक।
+8. **स्वतः-समाप्त क्लिपबोर्ड गार्ड (`src/clipboard_guard.rs`)** — Windows 10/11 इतिहास और क्लाउड सिंक को रोकता है, और TTL के बाद डेटा को सुरक्षित रूप से मिटा देता है।
+9. **कॉची रीड-सोलोमन त्रुटि-सुधार आर्मर (`src/armor.rs`)** — कुल $K+M$ में से किन्हीं $K$ बरकरार हिस्सों से पूरे डेटा का पुनर्निर्माण।
+10. **निर्देशिका और बहु-फ़ाइल संग्रह पैकिंग (`src/archive.rs`)** — Zip Slip / Zip Bomb सुरक्षा और प्रति-फ़ाइल SHA-256 सत्यापन।
+11. **कुंजीफ़ाइल + पासफ़्रेज़ 2FA व्युत्पत्ति (`src/keyfile.rs`)** — भौतिक USB टोकन के लिए स्ट्रीमिंग 64 KiB HMAC-SHA256 प्री-हैशिंग।
+12. **स्ट्रीमिंग ब्लॉक एन्क्रिप्शन (`src/stream.rs`)** — मल्टी-गीगाबाइट फ़ाइलों के लिए निरंतर $O(1)$ मेमोरी में 4 MiB प्रमाणित चंकिंग।
+13. **वाहक दृश्य और सांख्यिकीय अंतर रिपोर्ट (`src/diff.rs`)** — MSE, PSNR, SNR और शैनन एन्ट्रापी अंतर का मूल्यांकन।
+14. **डेड-मैन स्विच और ऑटो-श्रेड गार्ड (`src/guard.rs`)** — $K$ लगातार गलत प्रयासों के बाद 3-पास क्रिप्टोग्राफ़िक फ़ाइल विखंडन।
+15. **BIP-39 और CSPRNG पासफ़्रेज़ जनरेटर (`src/passgen/`)** — 2,048-शब्द डिकवेयर शब्दकोश और उच्च-एन्ट्रापी टोकन।
+16. **एकीकृत संरचित JSON आउटपुट (`--json`)** — CI/CD और ऑटोमेशन पाइपलाइनों के लिए मशीन-पठनीय आउटपुट।
+17. **कंटेनर कुंजी रोटेशन (`rotate`)** — डिस्क पर सादे पाठ को उजागर किए बिना नए नमक और नॉनस के साथ पुनः एन्क्रिप्शन।
+18. **अखंडता कैनरी सत्यापन (`canary`)** — फ़ाइल ट्री अखंडता की निगरानी और छेड़छाड़ का पता लगाना।
+19. **FIDO2 और Windows Hello हार्डवेयर टोकन (`src/hardware_token/`)** — CTAP2 PRF के माध्यम से YubiKey और बायोमेट्रिक हार्डवेयर बाइंडिंग।
+20. **पोस्ट-क्वांटम हाइब्रिड कुंजी इनकैप्सुलेशन (`src/pq_kem/`)** — X25519 और NIST FIPS 203 ML-KEM-768 का संयोजन।
+21. **सक्रिय मेमोरी ज़ीरोइज़ेशन (`zeroize`)** — उपयोग के तुरंत बाद मेमोरी से संवेदनशील बफ़र्स को मिटाना।
+
+### त्वरित शुरुआत
+
+```bash
+# 1. DPAPI हार्डवेयर बाइंडिंग के साथ फ़ाइल एन्क्रिप्ट करें
+svault encrypt -i wallet-seed.txt -o wallet.svault -p "your-strong-passphrase" --dpapi
+
+# 2. प्रशंसनीय अस्वीकार्यता वॉल्ट बनाएं (वास्तविक और डिकॉय डेटा)
+svault encrypt -i classified.txt --decoy shopping-list.txt -o deniable.svault \
+  -p "primary-secret-pass" --decoy-passphrase "decoy-harmless-pass" --padding 512
+
+# 3. डिकॉय पासवर्ड से डिक्रिप्ट करें (केवल डिकॉय सूची प्रकट होती है)
+svault decrypt -i deniable.svault -o revealed.txt -p "decoy-harmless-pass"
+
+# 4. बिना डिक्रिप्ट किए मेटाडेटा का निरीक्षण करें
+svault inspect deniable.svault
+
+# 5. PNG छवि के अंदर वॉल्ट छुपाएं
+svault embed -c wallpaper.png -s classified.txt --decoy shopping-list.txt -o wallpaper-stego.png \
+  -p "primary-secret-pass" --decoy-passphrase "decoy-harmless-pass"
+
+# 6. PNG छवि से वास्तविक रहस्य निकालें
+svault extract -c wallpaper-stego.png -o restored-seed.txt -p "primary-secret-pass"
+```
+
+### लाइसेंस और आभार
+
+Copyright 2026 **GHSFS** ([https://github.com/GHSFS](https://github.com/GHSFS)).
+
+यह सॉफ़्टवेयर **Apache License, Version 2.0** ([LICENSE](../../LICENSE)) के तहत जारी किया गया है। पुनर्वितरण में [NOTICE](../../NOTICE) में निहित एट्रिब्यूशन शामिल होना चाहिए।

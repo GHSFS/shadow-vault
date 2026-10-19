@@ -34,7 +34,7 @@ thiserror = "1"
 anyhow = "1"
 colored = "2"
 zeroize = { version = "1.8", features = ["derive"] }
-x25519-dalek = { version = "2.0", features = ["zeroize", "static_secrets"] }
+x25519-dalek = { version = "3.0", features = ["zeroize", "static_secrets"] }
 ml-kem = { version = "0.3", features = ["zeroize", "alloc"] }
 
 [target.'cfg(windows)'.dependencies]

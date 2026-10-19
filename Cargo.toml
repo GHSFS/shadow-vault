@@ -38,7 +38,7 @@ x25519-dalek = { version = "2.0", features = ["zeroize", "static_secrets"] }
 ml-kem = { version = "0.3", features = ["zeroize", "alloc"] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",
     "Win32_System_Memory",
